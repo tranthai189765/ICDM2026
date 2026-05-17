@@ -44,19 +44,35 @@ openai.api_key = API_KEY
 # API for toxicity evaluation
 PERSPECTIVE_API_KEY = os.getenv('PERSPECTIVE_KEY')
 
-# llama3 pipeline
-llama_pipeline = transformers.pipeline(
-    "text-generation",
-    model=LLAMA3_MODEL,
-    model_kwargs={"torch_dtype": torch.bfloat16},
-    device_map="auto",
-)
-terminators = [
-    llama_pipeline.tokenizer.eos_token_id,
-    llama_pipeline.tokenizer.convert_tokens_to_ids("<|eot_id|>")
-]
+# Lazy-loaded globals — not instantiated until first use so that runs using
+# DeepInfra/ChatGPT don't pay the cost of downloading LLaMA3 (~16 GB) or the
+# sentiment model (~500 MB).
+_llama_pipeline = None
+_terminators = None
+_sentiment_pipeline = None
 
-sentiment_analysis = pipeline(model="cardiffnlp/twitter-roberta-base-sentiment")
+
+def _get_llama_pipeline():
+    global _llama_pipeline, _terminators
+    if _llama_pipeline is None:
+        _llama_pipeline = transformers.pipeline(
+            "text-generation",
+            model=LLAMA3_MODEL,
+            model_kwargs={"torch_dtype": torch.bfloat16},
+            device_map="auto",
+        )
+        _terminators = [
+            _llama_pipeline.tokenizer.eos_token_id,
+            _llama_pipeline.tokenizer.convert_tokens_to_ids("<|eot_id|>")
+        ]
+    return _llama_pipeline, _terminators
+
+
+def _get_sentiment_pipeline():
+    global _sentiment_pipeline
+    if _sentiment_pipeline is None:
+        _sentiment_pipeline = pipeline(model="cardiffnlp/twitter-roberta-base-sentiment")
+    return _sentiment_pipeline
 
 
 def call_llama3_model(prompt, temperature=0.0, max_token=30, n_return_sequences=1):
@@ -67,6 +83,7 @@ def call_llama3_model(prompt, temperature=0.0, max_token=30, n_return_sequences=
     :param max_token: max gen tokens
     :return:
     """
+    llama_pipeline, terminators = _get_llama_pipeline()
     response = llama_pipeline(
         prompt,
         max_new_tokens=max_token,
@@ -388,5 +405,5 @@ def get_user_sentiment_for_item_recommendation(generated_user_utterance):
     :param generated_user_utterance: the generated utterance of the user
     :return:
     """
-    sentiment = sentiment_analysis(generated_user_utterance)
+    sentiment = _get_sentiment_pipeline()(generated_user_utterance)
     return sentiment
