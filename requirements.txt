@@ -17,6 +17,6 @@ loguru
 wandb
 dotenv
 tenacity
-openai==0.28.0
+openai>=1.0.0
 google-api-python-client
 fastchat
