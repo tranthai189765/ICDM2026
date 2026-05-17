@@ -201,6 +201,12 @@ GDP_ZERO = 'gdp_zero'
 GDP_ZERO_CONFIG_PATH_FOR_NEGOTIATION = 'config/models/GDP_ZERO_NEG.yaml'
 GDP_ZERO_CONFIG_PATH_FOR_EMOTIONAL_SUPPORT = 'config/models/GDP_ZERO_ES.yaml'
 
+# DMORL – Dynamic Multi-Objective Reinforcement Learning
+DMORL = 'dmorl'
+DMORL_CONFIG_PATH_FOR_RECOMMENDATION = 'config/models/DMORL_REC.yaml'
+DMORL_CONFIG_PATH_FOR_NEGOTIATION = 'config/models/DMORL_NEG.yaml'
+DMORL_CONFIG_PATH_FOR_EMOTIONAL_SUPPORT = 'config/models/DMORL_ES.yaml'
+
 # types of evaluators
 OFFLINE = 'offline'
 ONLINE = 'online'

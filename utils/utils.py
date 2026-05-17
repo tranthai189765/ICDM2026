@@ -104,6 +104,14 @@ from padpp.model import PADPPModel
 from padpp.pipeline import PADPPPipelineForRecommendation, PADPPPipelineForNegotiation, \
     PADPPPipelineForEmotionalSupport
 
+# DMORL
+from dmorl.config import DMORLConfigForRecommendation, DMORLConfigForNegotiation, \
+    DMORLConfigForEmotionalSupport
+from dmorl.trainer import DMORLTrainer
+from dmorl.model import DMORLModel
+from dmorl.pipeline import DMORLPipelineForRecommendation, DMORLPipelineForNegotiation, \
+    DMORLPipelineForEmotionalSupport
+
 # # SetMax PADPP
 # from baselines.PADPP_smp.config import SetMaxPADPPConfigForRecommendation, SetMaxPADPPConfigForNegotiation, \
 #     SetMaxPADPPConfigForEmotionalSupport
@@ -513,6 +521,14 @@ def get_model_by_names(scenario, model_names):
                 PADPPPipelineForRecommendation,
                 PADPPTrainer
             ],
+            # DMORL – Dynamic Multi-Objective RL
+            DMORL: [
+                DMORL_CONFIG_PATH_FOR_RECOMMENDATION,
+                DMORLConfigForRecommendation,
+                DMORLModel,
+                DMORLPipelineForRecommendation,
+                DMORLTrainer
+            ],
             # # DDQL
             # DDQL: [
             #     DDQL_CONFIG_PATH_FOR_RECOMMENDATION,
@@ -595,6 +611,14 @@ def get_model_by_names(scenario, model_names):
                 PADPPModel,
                 PADPPPipelineForNegotiation,
                 PADPPTrainer
+            ],
+            # DMORL – Dynamic Multi-Objective RL
+            DMORL: [
+                DMORL_CONFIG_PATH_FOR_NEGOTIATION,
+                DMORLConfigForNegotiation,
+                DMORLModel,
+                DMORLPipelineForNegotiation,
+                DMORLTrainer
             ],
             # # Set max PADPP
             # SMP_PADPP: [
@@ -703,6 +727,14 @@ def get_model_by_names(scenario, model_names):
                 PADPPModel,
                 PADPPPipelineForEmotionalSupport,
                 PADPPTrainer
+            ],
+            # DMORL – Dynamic Multi-Objective RL
+            DMORL: [
+                DMORL_CONFIG_PATH_FOR_EMOTIONAL_SUPPORT,
+                DMORLConfigForEmotionalSupport,
+                DMORLModel,
+                DMORLPipelineForEmotionalSupport,
+                DMORLTrainer
             ],
             # # Proactive chain of thought for emotional support conversation
             # PRO_COT: [

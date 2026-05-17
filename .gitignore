@@ -3,3 +3,29 @@ cache
 checkpoints
 logs
 data
+
+# Environment / secrets — keep example but ignore actual keys
+.env
+.env.*
+!.env.example
+
+# DMORL runtime files (persisted between runs but not versioned)
+dmorl_hints_*.json
+dmorl_skills_*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
