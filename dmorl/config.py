@@ -34,7 +34,7 @@ class DMORLConfig(PADPPConfig):
 
     # Keep full standard PADPP RLT after the curriculum phases
     run_curriculum = True              # If False, skip phases 1a/1b and go straight to PADPP RLT
-    force_rediscover_skills = False    # If True, always re-query LLM for skills
+    force_rediscover_skills = True     # Always re-query LLM for skills each run
     phase1a_only = False               # Stop after Phase 1a (for isolated testing)
 
     # Debug mode

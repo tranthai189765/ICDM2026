@@ -36,5 +36,5 @@ use_hints: true
 hints_file: "dmorl_hints_neg.json"
 skills_file: "dmorl_skills_neg.json"
 run_curriculum: true
-force_rediscover_skills: false
+force_rediscover_skills: true
 saved_dir: "checkpoints/dmorl_neg"
