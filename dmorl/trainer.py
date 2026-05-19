@@ -19,6 +19,7 @@ Implements 3-phase training on top of PADPPTrainer:
 """
 
 import copy
+import csv
 import datetime
 import json
 import math
@@ -54,6 +55,53 @@ class DebugLogger:
         pass
 
 
+class TrainingCSVLogger:
+    """
+    Writes two CSV files to log_dir:
+      - training_losses.csv  : global_step, loss
+      - training_rewards.csv : epoch, episode, step, phase, skill, action, done, r0, r1, ...
+    Added to trainer.loggers automatically; loss rows come from train_rl_step;
+    reward rows are written via log_reward() called inside _run_curriculum_rlt.
+    """
+
+    def __init__(self, log_dir: str, n_objectives: int):
+        os.makedirs(log_dir, exist_ok=True)
+
+        loss_path = os.path.join(log_dir, "training_losses.csv")
+        self._loss_f = open(loss_path, "w", newline="", encoding="utf-8")
+        self._loss_w = csv.writer(self._loss_f)
+        self._loss_w.writerow(["global_step", "loss"])
+
+        reward_path = os.path.join(log_dir, "training_rewards.csv")
+        self._reward_f = open(reward_path, "w", newline="", encoding="utf-8")
+        self._reward_w = csv.writer(self._reward_f)
+        obj_cols = [f"r{i}" for i in range(n_objectives)]
+        self._reward_w.writerow(["epoch", "episode", "step", "phase", "skill", "action", "done"] + obj_cols)
+        self._n_obj = n_objectives
+
+        loguru_logger.info(f"[DMORL CSV] Writing logs → {loss_path}")
+        loguru_logger.info(f"[DMORL CSV] Writing logs → {reward_path}")
+
+    def record(self, results: dict, step: int) -> None:
+        loss = results.get("loss", None)
+        if loss is not None:
+            val = loss.item() if hasattr(loss, "item") else float(loss)
+            self._loss_w.writerow([step, f"{val:.8f}"])
+            self._loss_f.flush()
+
+    def log_reward(self, epoch: int, episode: int, step: int,
+                   phase: str, skill: str, action, rewards, done: int) -> None:
+        if not isinstance(rewards, list):
+            rewards = [rewards]
+        obj_vals = [f"{float(r):.6f}" for r in rewards[:self._n_obj]]
+        self._reward_w.writerow([epoch, episode, step, phase, skill, str(action), done] + obj_vals)
+        self._reward_f.flush()
+
+    def close(self) -> None:
+        self._loss_f.close()
+        self._reward_f.close()
+
+
 class DMORLTrainer(PADPPTrainer):
 
     def __init__(self, game_config, model_config, accelerator, game, model,
@@ -64,9 +112,15 @@ class DMORLTrainer(PADPPTrainer):
                          generation_method)
         self.dmorl_controller = dmorl_controller
 
+        if self.loggers is None:
+            self.loggers = []
+
+        # Always log rewards + losses to CSV
+        csv_log_dir = getattr(model_config, "saved_dir", "checkpoints")
+        self.csv_logger = TrainingCSVLogger(csv_log_dir, model_config.n_objectives)
+        self.loggers.append(self.csv_logger)
+
         if getattr(model_config, "debug", False):
-            if self.loggers is None:
-                self.loggers = []
             self.loggers.append(DebugLogger())
             _llm_ctrl.enable_debug(True)
             loguru_logger.info("[DMORL] Debug mode ON — LLM prompts, rewards, and losses will be printed.")
@@ -102,7 +156,8 @@ class DMORLTrainer(PADPPTrainer):
                 f"[DMORL Phase-1a] Skill: '{skill['name']}' | w={w_fixed.round(3)}"
             )
             self._run_curriculum_rlt(cases, device, simulators, action_mapping,
-                                     fixed_weight=w_fixed)
+                                     fixed_weight=w_fixed,
+                                     phase="1a", skill_name=skill["name"])
 
         self.model_config.num_train_rl_epochs = original_epochs
         loguru_logger.info("[DMORL Phase-1a] Basic skill curriculum complete.")
@@ -141,7 +196,8 @@ class DMORLTrainer(PADPPTrainer):
         self.model_config.num_train_rl_epochs = self.model_config.n_advanced_train_epochs
 
         self._run_curriculum_rlt(cases, device, simulators, action_mapping,
-                                 skill_weights=adv_weights, p_skill=0.6)
+                                 skill_weights=adv_weights, p_skill=0.6,
+                                 phase="1b", skill_name="advanced")
 
         self.model_config.num_train_rl_epochs = original_epochs
         loguru_logger.info("[DMORL Phase-1b] Advanced skill training complete.")
@@ -151,7 +207,8 @@ class DMORLTrainer(PADPPTrainer):
     # ─────────────────────────────────────────────────────────────────────────
 
     def _run_curriculum_rlt(self, cases, device, simulators, action_mapping,
-                             fixed_weight=None, skill_weights=None, p_skill=1.0):
+                             fixed_weight=None, skill_weights=None, p_skill=1.0,
+                             phase="1a", skill_name=""):
         """
         Run `num_train_rl_epochs` of GPI TD-learning.
         - fixed_weight: use this w for every episode (Phase 1a)
@@ -173,6 +230,7 @@ class DMORLTrainer(PADPPTrainer):
 
         best_metric = -math.inf
 
+        episode_counter = 0
         for train_step in range(self.model_config.num_train_rl_epochs):
             self.model.train()
 
@@ -219,10 +277,18 @@ class DMORLTrainer(PADPPTrainer):
                     # Buffer element: [state_dict, reward, 1, abs(done)]
                     buffer.append([old_state, reward, 1, abs(done_flag)])
 
+                    r_list = reward.squeeze().tolist()
+                    if not isinstance(r_list, list):
+                        r_list = [r_list]
+
+                    # CSV reward logging (always on)
+                    self.csv_logger.log_reward(
+                        epoch=train_step, episode=episode_counter, step=t,
+                        phase=phase, skill=skill_name,
+                        action=action, rewards=r_list, done=done_flag,
+                    )
+
                     if getattr(self.model_config, "debug", False):
-                        r_list = reward.squeeze().tolist()
-                        if not isinstance(r_list, list):
-                            r_list = [r_list]
                         r_str = "[" + ", ".join(f"{v:.4f}" for v in r_list) + "]"
                         loguru_logger.debug(
                             f"[DEBUG|Curriculum] epoch={train_step} t={t} "
@@ -231,6 +297,8 @@ class DMORLTrainer(PADPPTrainer):
 
                     if done:
                         break
+
+                episode_counter += 1
 
             # ── RL update ─────────────────────────────────────────────────────
             if train_step >= 0 and len(buffer) >= self.model_config.train_rl_batch_size:

@@ -59,6 +59,8 @@ def _call_llm(messages: List[Dict], temperature: float = 0.3, max_tokens: int = 
 
 def _parse_json_block(text: str) -> any:
     """Extract and parse the first JSON block found in the LLM response."""
+    # Strip <think>...</think> chain-of-thought preamble (Qwen3, DeepSeek-R1, etc.)
+    text = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE).strip()
     match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
     if match:
         text = match.group(1).strip()

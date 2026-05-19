@@ -1,5 +1,6 @@
 import time
 
+from loguru import logger
 from base.simulator import Simulator
 from utils.prompt import call_llm
 
@@ -102,7 +103,7 @@ class NegotiationSimulator(Simulator):
 
         # calling the llm for response generation
         response = call_llm(messages, n=1, temperature=0.00000001, max_token=self.max_gen_token, model_type=self.model_type)
-        print("Simulator Generation Time: ", time.time() - t)
+        logger.debug(f"Simulator Generation Time: {time.time() - t:.2f}s")
         return response[0]
 
     def generate_persona_description(self, user_profile):

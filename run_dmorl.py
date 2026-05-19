@@ -111,6 +111,12 @@ def parse_dmorl_args():
                                help='Print LLM prompts/outputs, per-step rewards/losses, save eval dialogues')
     dmorl_parser.add_argument('--debug_output_dir', type=str, default=None,
                                help='Directory for debug artefacts (default: debug_output)')
+    dmorl_parser.add_argument('--skip_sft', action='store_true', default=False,
+                               help='Skip SFT phase (use existing checkpoint)')
+    dmorl_parser.add_argument('--skip_offline_eval', action='store_true', default=False,
+                               help='Skip offline evaluation phase')
+    dmorl_parser.add_argument('--sampled_times', type=int, default=None,
+                               help='Episodes collected per RL epoch (override config, e.g. 5 for fast debug)')
 
     import sys
     dmorl_extra, _ = dmorl_parser.parse_known_args(sys.argv[1:])
@@ -235,6 +241,11 @@ if __name__ == '__main__':
                     'prioritized_objective', 'uniform')
                 dmorl_params['test_phase'] = args.get('test_phase', False)
                 dmorl_params['num_train_rl_epochs'] = args.get('num_train_rl_epochs', 50)
+                # --skip_sft / --skip_offline_eval convenience flags
+                if dmorl_overrides.get('skip_sft'):
+                    dmorl_params['run_sft'] = False
+                if dmorl_overrides.get('skip_offline_eval'):
+                    dmorl_params['run_offline_eval'] = False
                 model_config.set_params(dmorl_params)
 
             model = model_class(model_config)

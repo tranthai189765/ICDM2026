@@ -972,11 +972,11 @@ class PADPPTrainer(Trainer):
                 else:
                     logits = torch.bmm(logits, batch['w'].unsqueeze(
                         1).permute(0, 2, 1)).squeeze(-1)
-                    print(batch['w'], logits)
+                    loguru_logger.debug(f"w={batch['w']} logits={logits}")
 
                 action, log_prob = self.select_action(logits, is_test=is_test)
                 action = inverse_action_mapping[action]
-                print(action, log_prob)
+                loguru_logger.debug(f"action={action} log_prob={log_prob}")
 
         # return action and log prob
         return action, log_prob, reward
@@ -1331,7 +1331,7 @@ class PADPPTrainer(Trainer):
         #     print(f"turn {k}, values: {v}")
 
         # strategy statistics
-        print(strategy_statistics)
+        loguru_logger.debug(f"strategy_statistics={strategy_statistics}")
 
         # compute the results using the evaluator
         results = self.online_evaluator.report()

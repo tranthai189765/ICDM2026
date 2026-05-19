@@ -1,5 +1,6 @@
 import time
 
+from loguru import logger
 from base.text_gen import LLMGeneration
 from config.config import GenerationConfig
 # reuse the function designed for chatgpt
@@ -69,6 +70,6 @@ class Llama3Generation(LLMGeneration):
                             max_token=self.generation_config.max_gen_length,
                             model_type="llama3")
 
-        print("Response Generation Time: ", time.time() - t)
+        logger.debug(f"Response Generation Time: {time.time() - t:.2f}s")
         # returning the response
         return response[0]

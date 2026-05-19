@@ -178,7 +178,7 @@ class RecommendationGame(Game):
         # compute the reward
         reward, done, o_done = self.compute_reward(state, action, system_response, simulator.user_profile_description)
 
-        print(reward, done, o_done)
+        logger.debug(f"reward={reward} done={done} o_done={o_done}")
         # return the new state, intermediate reward, and termination flag.
         return state, reward, done, o_done
 
@@ -313,7 +313,7 @@ class RecommendationGame(Game):
         if AVG_TURN in self.game_config.objectives:
             reward.append(avg_turn_reward)
 
-        print(reward)
+        logger.debug(f"reward={reward}")
         return reward, done, o_done
 
 
@@ -439,8 +439,8 @@ class NegotiationGame(Game):
                                                              max_tokens=10
                                                              )
 
-        print(time.time() - t)
-        print(responses)
+        logger.debug(f"NLI assessment time={time.time() - t:.2f}s")
+        logger.debug(f"NLI responses={responses}")
 
         # deal used to compute the neg_sr
         # indicate whether the system and the user reach a deal
@@ -575,7 +575,7 @@ class NegotiationGame(Game):
         if SUCCESS_RATE in self.game_config.objectives:
             reward.append(neg_sr)
 
-        print(reward)
+        logger.debug(f"reward={reward}")
         return reward, done, done
 
 
@@ -697,7 +697,7 @@ class EmotionalSupportGame(Game):
                                                                    max_tokens=10
                                                                    )
 
-        print(responses)
+        logger.debug(f"ES NLI responses={responses}")
 
         # used to compute the es_sr
         # indicate whether the supporter solved the seeker problem.
@@ -773,5 +773,5 @@ class EmotionalSupportGame(Game):
         if AVG_TURN in self.game_config.objectives:
             rewards.append(turn_reward)
 
-        print(rewards)
+        logger.debug(f"rewards={rewards}")
         return rewards, done, done
