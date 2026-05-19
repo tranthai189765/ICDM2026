@@ -7,6 +7,7 @@ Handles:
   4. Hint Manager (post-dialogue refinement)
 """
 
+import datetime
 import json
 import os
 import re
@@ -79,11 +80,62 @@ class SkillLibrary:
     weight_vector lives on the n_objectives-simplex.
     """
 
-    def __init__(self, n_objectives: int, skills_file: str = "dmorl_skills.json"):
+    def __init__(self, n_objectives: int, skills_file: str = "dmorl_skills.json",
+                 skill_log_file: str = None):
         self.n_objectives = n_objectives
         self.skills_file = skills_file
+        self.skill_log_file = skill_log_file
         self.basic_skills: List[Dict] = []
         self.advanced_skills: List[Dict] = []
+
+    # ── Internal logging helper ──────────────────────────────────────────────
+
+    def _log_skill_discovery(self, phase: str, scenario: str,
+                              objective_names: List[str], messages: List[Dict],
+                              raw_response: str, skills: List[Dict],
+                              fallback: bool = False) -> None:
+        """Append a skill discovery record (prompt + response + parsed result) to the log file."""
+        if not self.skill_log_file:
+            return
+        sep = "=" * 70
+        ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        obj_str = ", ".join(objective_names)
+        lines = [
+            sep,
+            f"[Phase 1{'a' if phase == 'basic' else 'b'}] {phase.upper()} SKILL DISCOVERY",
+            f"Timestamp : {ts}",
+            f"Scenario  : {scenario}",
+            f"Objectives: {obj_str}",
+            f"Status    : {'FALLBACK (LLM parse failed)' if fallback else 'OK'}",
+            sep,
+            "",
+        ]
+        for msg in messages:
+            lines.append(f"[PROMPT – {msg['role'].upper()}]")
+            lines.append(msg["content"])
+            lines.append("")
+        lines += [
+            "[RAW LLM RESPONSE]",
+            raw_response if raw_response else "(none – error before LLM call)",
+            "",
+            "[PARSED SKILLS]",
+        ]
+        for i, s in enumerate(skills, 1):
+            wv = s.get("weight_vector", [])
+            wv_str = "  ".join(f"{objective_names[j]}={wv[j]:.4f}"
+                               for j in range(min(len(wv), len(objective_names))))
+            lines.append(f"  {i}. {s.get('name', '?')}  [{s.get('type', phase)}]")
+            lines.append(f"     {s.get('description', '')}")
+            lines.append(f"     Weights: {wv_str}")
+        lines += ["", sep, ""]
+
+        try:
+            import os as _os
+            _os.makedirs(_os.path.dirname(self.skill_log_file) or ".", exist_ok=True)
+            with open(self.skill_log_file, "a", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+        except Exception as e:
+            logger.warning(f"[SkillLibrary] Could not write skill log ({e})")
 
     # ── LLM-based discovery ──────────────────────────────────────────────────
 
@@ -124,10 +176,10 @@ class SkillLibrary:
                 ),
             },
         ]
+        raw = ""
         try:
             raw = _call_llm(messages, temperature=0.5)
             skills = _parse_json_block(raw)
-            # Normalise weight vectors
             normalized = []
             for s in skills[:n]:
                 wv = s.get("weight_vector", [1.0 / self.n_objectives] * self.n_objectives)
@@ -140,11 +192,16 @@ class SkillLibrary:
                     "type": "basic",
                 })
             self.basic_skills = normalized
+            self._log_skill_discovery("basic", scenario, objective_names,
+                                      messages, raw, normalized, fallback=False)
             logger.info(f"[SkillLibrary] Discovered {len(normalized)} basic skills.")
             return normalized
         except Exception as e:
             logger.warning(f"[SkillLibrary] LLM skill discovery failed ({e}). Using uniform fallback.")
-            return self._fallback_skills(n, "basic")
+            fallback = self._fallback_skills(n, "basic")
+            self._log_skill_discovery("basic", scenario, objective_names,
+                                      messages, raw, fallback, fallback=True)
+            return fallback
 
     def discover_advanced_skills(self, scenario: str, objective_names: List[str],
                                   m: int = 5) -> List[Dict]:
@@ -187,6 +244,7 @@ class SkillLibrary:
                 ),
             },
         ]
+        raw = ""
         try:
             raw = _call_llm(messages, temperature=0.5)
             skills = _parse_json_block(raw)
@@ -202,11 +260,16 @@ class SkillLibrary:
                     "type": "advanced",
                 })
             self.advanced_skills = normalized
+            self._log_skill_discovery("advanced", scenario, objective_names,
+                                      messages, raw, normalized, fallback=False)
             logger.info(f"[SkillLibrary] Discovered {len(normalized)} advanced skills.")
             return normalized
         except Exception as e:
             logger.warning(f"[SkillLibrary] Advanced skill discovery failed ({e}). Using uniform fallback.")
-            return self._fallback_skills(m, "advanced")
+            fallback = self._fallback_skills(m, "advanced")
+            self._log_skill_discovery("advanced", scenario, objective_names,
+                                      messages, raw, fallback, fallback=True)
+            return fallback
 
     def all_weight_vectors(self):
         """Return weight vectors for all skills (basic + advanced) as a list."""
@@ -427,6 +490,7 @@ class DMORLController:
         dynamic_weight_horizon: int = 3,
         skills_file: str = "dmorl_skills.json",
         hints_file: str = "dmorl_hints.json",
+        skill_log_file: str = None,
     ):
         self.n_objectives = n_objectives
         self.objective_names = objective_names
@@ -434,7 +498,7 @@ class DMORLController:
         self.n_basic_skills = n_basic_skills
         self.n_advanced_skills = n_advanced_skills
 
-        self.skill_library = SkillLibrary(n_objectives, skills_file)
+        self.skill_library = SkillLibrary(n_objectives, skills_file, skill_log_file)
         self.weight_controller = DynamicWeightController(
             n_objectives, objective_names, dynamic_weight_horizon
         )

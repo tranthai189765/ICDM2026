@@ -17,14 +17,15 @@ DMORL extends PADPP to address two core limitations of existing multi-objective 
 1. [Motivation & Key Ideas](#1-motivation--key-ideas)
 2. [System Architecture](#2-system-architecture)
 3. [Repository Structure](#3-repository-structure)
-4. [Installation](#4-installation)
-5. [Configuration](#5-configuration)
-6. [Training Pipeline](#6-training-pipeline)
-7. [Inference](#7-inference)
-8. [Parameters Reference](#8-parameters-reference)
-9. [Running Experiments](#9-running-experiments)
-10. [PADPP Baseline](#10-padpp-baseline)
-11. [Citation](#11-citation)
+4. [Logs & Output Files](#4-logs--output-files)
+5. [Installation](#5-installation)
+6. [Configuration](#6-configuration)
+7. [Training Pipeline](#7-training-pipeline)
+8. [Inference](#8-inference)
+9. [Parameters Reference](#9-parameters-reference)
+10. [Running Experiments](#10-running-experiments)
+11. [PADPP Baseline](#11-padpp-baseline)
+12. [Citation](#12-citation)
 
 ---
 
@@ -174,7 +175,85 @@ ICDM2026/
 
 ---
 
-## 4. Installation
+## 4. Logs & Output Files
+
+All files are written to the checkpoint directory configured in `saved_dir` (default `checkpoints/dmorl_neg/` for negotiation, see YAML).
+
+### Training logs
+
+| File | Written by | Format | Description |
+|---|---|---|---|
+| `training_losses.csv` | `DMORLTrainer` → `TrainingCSVLogger` | CSV | One row per Q-network update. Columns: `global_step, loss` |
+| `training_rewards.csv` | `DMORLTrainer` → `TrainingCSVLogger` | CSV | One row per dialogue step during Phase 1a/1b. Columns: `epoch, episode, step, phase, skill, action, done, r0, r1, ...` |
+
+`training_rewards.csv` example (negotiation, 3 objectives = sl\_ratio, fairness, deal\_rate):
+
+```
+epoch,episode,step,phase,skill,action,done,r0,r1,r2
+0,0,0,1a,Firm Seller,propose,0,0.720000,0.350000,0.000000
+0,0,1,1a,Firm Seller,propose,0,0.720000,0.350000,0.000000
+0,0,2,1a,Firm Seller,agree,1,0.720000,0.350000,1.000000
+```
+
+### Skill discovery log
+
+| File | Written by | Format | Description |
+|---|---|---|---|
+| `skill_discovery.txt` | `SkillLibrary` | Plain text | Full LLM prompt + raw response + parsed skills for every Phase 1a/1b discovery call |
+
+`skill_discovery.txt` example:
+
+```
+======================================================================
+[Phase 1a] BASIC SKILL DISCOVERY
+Timestamp : 2026-05-20 10:31:00
+Scenario  : negotiation
+Objectives: sl_ratio, fairness, deal_rate
+Status    : OK
+======================================================================
+
+[PROMPT – SYSTEM]
+You are an expert in multi-objective dialogue policy design. ...
+
+[PROMPT – USER]
+Scenario: negotiation.
+Objectives (in order): [sl_ratio, fairness, deal_rate].
+Please propose exactly 5 BASIC dialogue skills ...
+
+[RAW LLM RESPONSE]
+<think>
+... (Qwen3 chain-of-thought, stripped before JSON parse) ...
+</think>
+```json
+[{"name": "Firm Seller", ...}, ...]
+```
+
+[PARSED SKILLS]
+  1. Firm Seller  [basic]
+     Maximise price gain while ignoring user sentiment
+     Weights: sl_ratio=0.8500  fairness=0.0500  deal_rate=0.1000
+
+  2. Fair Dealer  [basic]
+     Balance price gain with a fair outcome for both sides
+     Weights: sl_ratio=0.3300  fairness=0.4300  deal_rate=0.2400
+  ...
+```
+
+If the LLM call fails (JSON parse error, API error, etc.), the file still records the raw response and marks `Status: FALLBACK`.
+
+### Existing PADPP file logger
+
+When `--loggers file` is passed, a human-readable run log is written to:
+
+```
+logs/{scenario}/{dataset}/{model_name}/{seed}-{timestamp}
+```
+
+This records scenario/dataset/model config and metric results at each evaluation step.
+
+---
+
+## 5. Installation
 
 ```bash
 git clone https://github.com/tranthai189765/ICDM2026.git
@@ -204,7 +283,7 @@ mkdir logs checkpoints
 
 ---
 
-## 5. Configuration
+## 6. Configuration
 
 ### YAML Config Files
 
@@ -263,7 +342,7 @@ Each model + scenario pair has a YAML file under `config/models/`. Example: `con
 
 ---
 
-## 6. Training Pipeline
+## 7. Training Pipeline
 
 ### Full DMORL Pipeline
 
@@ -347,7 +426,7 @@ Interpretation: at this turn, prioritise deal_rate (0.65)
 
 ---
 
-## 7. Inference
+## 8. Inference
 
 ### Test-only Mode
 
@@ -395,7 +474,7 @@ python run_dmorl.py \
 
 ---
 
-## 8. Parameters Reference
+## 9. Parameters Reference
 
 ### Command-line Arguments
 
@@ -443,7 +522,7 @@ python run_dmorl.py \
 
 ---
 
-## 9. Running Experiments
+## 10. Running Experiments
 
 ### Negotiation (CraigslistBargain)
 
@@ -521,7 +600,7 @@ python run_dmorl.py \
 
 ---
 
-## 10. PADPP Baseline
+## 11. PADPP Baseline
 
 The original PADPP code is fully preserved. Run it with `run.py`:
 
@@ -549,7 +628,7 @@ python run.py \
 
 ---
 
-## 11. Citation
+## 12. Citation
 
 If you use this code, please cite both PADPP and our DMORL work:
 

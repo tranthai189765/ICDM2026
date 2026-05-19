@@ -49,6 +49,8 @@ class DMORLPipeline(PADPPPipeline):
         objective_names = SCENARIO_OBJECTIVE_NAMES.get(
             scenario, [f"obj_{i}" for i in range(self.model_config.n_objectives)]
         )
+        saved_dir = getattr(self.model_config, "saved_dir", "checkpoints")
+        skill_log_file = os.path.join(saved_dir, "skill_discovery.txt")
         controller = DMORLController(
             n_objectives=self.model_config.n_objectives,
             objective_names=objective_names,
@@ -58,6 +60,7 @@ class DMORLPipeline(PADPPPipeline):
             dynamic_weight_horizon=self.model_config.dynamic_weight_horizon,
             skills_file=self.model_config.skills_file,
             hints_file=self.model_config.hints_file,
+            skill_log_file=skill_log_file,
         )
         # Phase 0: Discover skills (loads from file if already done)
         controller.initialize_skills(
