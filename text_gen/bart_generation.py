@@ -550,8 +550,7 @@ class BARTGeneration(PLMGeneration):
         self.is_test = is_test
 
         # creating the log dir for the scenario if it is not existed
-        if not os.path.exists(self.pipeline.game_config.log_dir):
-            os.mkdir(self.pipeline.game_config.log_dir)
+        os.makedirs(self.pipeline.game_config.log_dir, exist_ok=True)
 
         # utilizing this class at inference time
         if is_test:

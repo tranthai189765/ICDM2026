@@ -24,12 +24,10 @@ class Game(ABC):
         self.model_type = self.game_config.model_type
 
         # create the log dir
-        if not os.path.exists(self.game_config.log_dir):
-            os.mkdir(self.game_config.log_dir)
+        os.makedirs(self.game_config.log_dir, exist_ok=True)
 
         # create the saved dir
-        if not os.path.exists(self.game_config.saved_dir):
-            os.mkdir(self.game_config.saved_dir)
+        os.makedirs(self.game_config.saved_dir, exist_ok=True)
 
     @abstractmethod
     def reset(self, case, simulator):

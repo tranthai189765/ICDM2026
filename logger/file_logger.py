@@ -27,22 +27,12 @@ class FileLogger(Logger):
         self.model_name = model_name
 
         # creating the log directory if it is not existed
-        if not os.path.exists(log_dir):
-            os.mkdir(log_dir)
-
-        if not os.path.exists(self.scenario_config.log_dir):
-            os.mkdir(self.scenario_config.log_dir)
-
-        # logs/recommendation/durecdial
-        log_dir = os.path.join(self.scenario_config.log_dir, self.dataset_config.dataset_name)
-        if not os.path.exists(log_dir):
-            os.mkdir(log_dir)
-
-        # logs/recommendation/durecdial/BART
-        log_dir = os.path.join(log_dir, model_name)
-        if not os.path.exists(log_dir):
-            os.mkdir(log_dir)
-
+        log_dir = os.path.join(
+            self.scenario_config.log_dir,
+            self.dataset_config.dataset_name,
+            model_name,
+        )
+        os.makedirs(log_dir, exist_ok=True)
         self.log_dir = log_dir
 
         # create the path to the log file
@@ -98,8 +88,7 @@ class FileLogger(Logger):
         """
         # create the generated responses folder
         convs_dir_path = os.path.join(log_dir, "responses")
-        if not os.path.exists(convs_dir_path):
-            os.mkdir(convs_dir_path)
+        os.makedirs(convs_dir_path, exist_ok=True)
         # create the file path
         convs_file_path = os.path.join(convs_dir_path, file_name)
         with open(convs_file_path, 'w') as f:

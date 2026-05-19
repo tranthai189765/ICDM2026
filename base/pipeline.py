@@ -22,34 +22,21 @@ class Pipeline(ABC):
         self.dataset = dataset
 
         # creating the log dir
-        if not os.path.exists(self.game_config.log_dir):
-            os.mkdir(self.game_config.log_dir)
-
-        # logs/recommendation/durecdial
-        log_dir = os.path.join(self.game_config.log_dir, self.dataset_config.dataset_name)
-        if not os.path.exists(log_dir):
-            os.mkdir(log_dir)
-
-        # logs/recommendation/durecdial/BART
-        log_dir = os.path.join(log_dir, str(self.model.__class__.__name__))
-        if not os.path.exists(log_dir):
-            os.mkdir(log_dir)
-
+        log_dir = os.path.join(
+            self.game_config.log_dir,
+            self.dataset_config.dataset_name,
+            str(self.model.__class__.__name__),
+        )
+        os.makedirs(log_dir, exist_ok=True)
         self.model_config.log_dir = log_dir
 
         # creating the saved dir
-        if not os.path.exists(self.game_config.saved_dir):
-            os.mkdir(self.game_config.saved_dir)
-
-        # checkpoints/recommendation/durecdial
-        saved_dir = os.path.join(self.game_config.saved_dir, self.dataset_config.dataset_name)
-        if not os.path.exists(saved_dir):
-            os.mkdir(saved_dir)
-
-        # checkpoints/recommendation/durecdial/BART
-        saved_dir = os.path.join(saved_dir, str(self.model.__class__.__name__) + "_" + str(self.game.game_config.seed))
-        if not os.path.exists(saved_dir):
-            os.mkdir(saved_dir)
+        saved_dir = os.path.join(
+            self.game_config.saved_dir,
+            self.dataset_config.dataset_name,
+            str(self.model.__class__.__name__) + "_" + str(self.game.game_config.seed),
+        )
+        os.makedirs(saved_dir, exist_ok=True)
 
         self.model_config.saved_dir = saved_dir
 
