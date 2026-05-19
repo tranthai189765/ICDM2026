@@ -177,7 +177,7 @@ class PADPPTrainer(Trainer):
             },
         ]
         optimizer = AdamW(optimizer_grouped_parameters, lr=learning_rate)
-        print("Number trainable params: ", count_parameters(model))
+        loguru_logger.debug(f"Number trainable params: {count_parameters(model)}")
         return optimizer
 
     def create_scheduler(self, optimizer, num_warmup_steps, max_train_steps):
@@ -652,6 +652,8 @@ class PADPPTrainer(Trainer):
             "loss": mean_loss
         }
 
+        loguru_logger.info(f"[RL] step={self.ppo_global_step} loss={mean_loss.item():.6f}")
+
         # log the results to terminal or file
         for logger in self.loggers:
             logger.record(results, self.ppo_global_step)
@@ -674,7 +676,7 @@ class PADPPTrainer(Trainer):
             self.model_config.buffer_length // self.model_config.train_rl_batch_size)
 
         # create the optimizer for actor and critic
-        print("Actor Learning Rate: ", self.model_config.actor_learning_rate)
+        loguru_logger.debug(f"Actor Learning Rate: {self.model_config.actor_learning_rate}")
         optimizer = self.create_optimizer(self.model,
                                           self.model_config.actor_learning_rate)
 

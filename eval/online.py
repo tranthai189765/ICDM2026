@@ -1,4 +1,5 @@
 from collections import defaultdict
+from loguru import logger
 from base.evaluator import Evaluator
 
 
@@ -20,7 +21,7 @@ class OnlineEvaluator(Evaluator):
         :param results: the results of each conversation
         :return: None
         """
-        print(results)
+        logger.debug(f"online eval results: {results}")
         self.preds.append(results)
 
     def reset(self):

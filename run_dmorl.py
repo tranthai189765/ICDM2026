@@ -59,12 +59,24 @@ Usage examples:
 """
 
 import os
+import sys
 import time
+
+# ── Silence terminal output ───────────────────────────────────────────────────
+os.environ["TQDM_DISABLE"] = "1"   # disable all tqdm bars
 
 from dotenv import load_dotenv
 from accelerate import Accelerator, DistributedDataParallelKwargs
 from loguru import logger
 import wandb
+
+# Redirect loguru to file only (INFO+); removes default stderr handler
+logger.remove()
+_log_dir = "logs"
+os.makedirs(_log_dir, exist_ok=True)
+_log_file = os.path.join(_log_dir, f"run_{time.strftime('%Y%m%d_%H%M%S')}.log")
+logger.add(_log_file, level="INFO", encoding="utf-8",
+           format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {message}")
 
 from utils.utils import (
     get_datasets_by_names, get_model_by_names, reformat_args,

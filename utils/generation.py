@@ -1,5 +1,6 @@
 import copy
 import numpy as np
+from loguru import logger
 
 from config.constants import *
 
@@ -258,7 +259,7 @@ def construct_prompt_for_chat_gpt_response_generation_negotiation(state, prompt)
                 goal_description = f". Please agree with the price of ${proposed_priced}."
             # elif strategy == "disagree":
             #     goal_description = f". Please disagree with the price of ${proposed_priced}."
-            print(goal_description)
+            logger.debug(f"goal_description: {goal_description}")
         else:
             goal_description = pred_goal
 
