@@ -9,7 +9,7 @@ from config.constants import DURECDIAL, INSPIRED, CRAIGSLIST_BARGAIN, ES_CONV
 from utils.prompt import get_llm_based_assessment_for_recommendation, get_llm_based_assessment_for_negotiation, \
     get_llm_based_assessment_for_emotional_support, get_toxicity_assessment_for_emotional_support, \
     get_user_sentiment_for_item_recommendation
-from config.constants import SUCCESS_RATE, ITEM_FREQ, AVG_TURN, SL_RATIO, FAIRNESS, TOXICITY, USER_REWARD
+from config.constants import SUCCESS_RATE, DEAL_RATE, ITEM_FREQ, AVG_TURN, SL_RATIO, FAIRNESS, TOXICITY, USER_REWARD
 
 
 class Game(ABC):
@@ -571,8 +571,8 @@ class NegotiationGame(Game):
         # fairness
         if FAIRNESS in self.game_config.objectives:
             reward.append(fairness)
-        # SR
-        if SUCCESS_RATE in self.game_config.objectives:
+        # SR / deal_rate (YAML uses "deal_rate"; constants has both "sr" and "deal_rate")
+        if SUCCESS_RATE in self.game_config.objectives or DEAL_RATE in self.game_config.objectives:
             reward.append(neg_sr)
 
         logger.debug(f"reward={reward}")
