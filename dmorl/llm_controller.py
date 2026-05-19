@@ -13,15 +13,18 @@ import re
 import copy
 from typing import List, Dict, Optional, Tuple
 
+from dotenv import load_dotenv
 from openai import OpenAI
 from loguru import logger
+
+load_dotenv()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DeepInfra client
 # ─────────────────────────────────────────────────────────────────────────────
-DEEPINFRA_API_KEY = "XikFhiRZbBs9zFLfJNIpC90GVwUBsYYA"
-DEEPINFRA_BASE_URL = "https://api.deepinfra.com/v1/openai"
-DEEPINFRA_MODEL = "Qwen/Qwen3-32B"
+DEEPINFRA_API_KEY = os.getenv("DEEPINFRA_API_KEY")
+DEEPINFRA_BASE_URL = os.getenv("DEEPINFRA_BASE_URL", "https://api.deepinfra.com/v1/openai")
+DEEPINFRA_MODEL = os.getenv("DEEPINFRA_MODEL", "Qwen/Qwen3-32B")
 
 # Set to True via enable_debug() to log all LLM prompts and responses
 _DEBUG = False
@@ -33,7 +36,7 @@ def enable_debug(flag: bool = True) -> None:
     _DEBUG = flag
 
 
-def _call_llm(messages: List[Dict], temperature: float = 0.3, max_tokens: int = 512) -> str:
+def _call_llm(messages: List[Dict], temperature: float = 0.3, max_tokens: int = None) -> str:
     """Call DeepInfra's OpenAI-compatible API and return the text response."""
     if _DEBUG:
         logger.debug("[LLM PROMPT] ─────────────────────────────────────────")
@@ -42,12 +45,10 @@ def _call_llm(messages: List[Dict], temperature: float = 0.3, max_tokens: int = 
         logger.debug("───────────────────────────────────────────────────────")
 
     client = OpenAI(api_key=DEEPINFRA_API_KEY, base_url=DEEPINFRA_BASE_URL)
-    resp = client.chat.completions.create(
-        model=DEEPINFRA_MODEL,
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
+    kwargs = dict(model=DEEPINFRA_MODEL, messages=messages, temperature=temperature)
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
+    resp = client.chat.completions.create(**kwargs)
     text = resp.choices[0].message.content.strip()
 
     if _DEBUG:
@@ -124,7 +125,7 @@ class SkillLibrary:
             },
         ]
         try:
-            raw = _call_llm(messages, temperature=0.5, max_tokens=800)
+            raw = _call_llm(messages, temperature=0.5)
             skills = _parse_json_block(raw)
             # Normalise weight vectors
             normalized = []
@@ -187,7 +188,7 @@ class SkillLibrary:
             },
         ]
         try:
-            raw = _call_llm(messages, temperature=0.5, max_tokens=800)
+            raw = _call_llm(messages, temperature=0.5)
             skills = _parse_json_block(raw)
             normalized = []
             for s in skills[:m]:
