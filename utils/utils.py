@@ -278,7 +278,7 @@ def parse_args():
     # add vicuna training params
     add_model_args(parser)
 
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()
     return args
 
 
