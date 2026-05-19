@@ -13,13 +13,13 @@ gradient_accumulation_steps: 1
 num_train_epochs: 2
 dropout: 0.1
 max_grad_norm: 5
-run_sft: true
+run_sft: false          # SFT checkpoint already saved — skip to save time
 run_rlt: true
 run_online_eval: true
-run_offline_eval: true
+run_offline_eval: false # skip offline eval during debug runs
 num_train_rl_epochs: 10
 train_rl_batch_size: 128
-sampled_times: 50
+sampled_times: 5        # 5 episodes per epoch (was 50) — much faster for debug
 freeze_preference_backbone: true
 objective_embedding_size: 6
 num_train_q_network_epochs: 10
