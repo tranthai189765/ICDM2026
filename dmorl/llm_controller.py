@@ -23,9 +23,24 @@ DEEPINFRA_API_KEY = "XikFhiRZbBs9zFLfJNIpC90GVwUBsYYA"
 DEEPINFRA_BASE_URL = "https://api.deepinfra.com/v1/openai"
 DEEPINFRA_MODEL = "Qwen/Qwen3-32B"
 
+# Set to True via enable_debug() to log all LLM prompts and responses
+_DEBUG = False
+
+
+def enable_debug(flag: bool = True) -> None:
+    """Enable or disable verbose LLM prompt/response logging."""
+    global _DEBUG
+    _DEBUG = flag
+
 
 def _call_llm(messages: List[Dict], temperature: float = 0.3, max_tokens: int = 512) -> str:
     """Call DeepInfra's OpenAI-compatible API and return the text response."""
+    if _DEBUG:
+        logger.debug("[LLM PROMPT] ─────────────────────────────────────────")
+        for m in messages:
+            logger.debug(f"  [{m['role'].upper()}] {m['content']}")
+        logger.debug("───────────────────────────────────────────────────────")
+
     client = OpenAI(api_key=DEEPINFRA_API_KEY, base_url=DEEPINFRA_BASE_URL)
     resp = client.chat.completions.create(
         model=DEEPINFRA_MODEL,
@@ -33,7 +48,13 @@ def _call_llm(messages: List[Dict], temperature: float = 0.3, max_tokens: int = 
         temperature=temperature,
         max_tokens=max_tokens,
     )
-    return resp.choices[0].message.content.strip()
+    text = resp.choices[0].message.content.strip()
+
+    if _DEBUG:
+        logger.debug(f"[LLM RESPONSE] {text}")
+        logger.debug("───────────────────────────────────────────────────────")
+
+    return text
 
 
 def _parse_json_block(text: str) -> any:

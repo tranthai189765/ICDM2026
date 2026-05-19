@@ -19,7 +19,10 @@ Implements 3-phase training on top of PADPPTrainer:
 """
 
 import copy
+import datetime
+import json
 import math
+import os
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -30,10 +33,25 @@ from tqdm import tqdm
 from loguru import logger as loguru_logger
 
 from padpp.trainer import PADPPTrainer
+import dmorl.llm_controller as _llm_ctrl
 from dmorl.llm_controller import DMORLController
 from dmorl.model import DMORLModel
 from utils.game import random_weights
 from config.constants import RECOMMENDATION, NEGOTIATION, EMOTIONAL_SUPPORT, SUCCESS_RATE
+
+
+class DebugLogger:
+    """Appended to trainer.loggers when debug=True; echoes loss/metrics to console."""
+
+    def record(self, results: dict, step: int) -> None:
+        items = []
+        for k, v in results.items():
+            val = v.item() if hasattr(v, "item") else v
+            items.append(f"{k}={val:.6g}" if isinstance(val, float) else f"{k}={val}")
+        loguru_logger.debug(f"[DEBUG|step={step}] {', '.join(items)}")
+
+    def close(self) -> None:
+        pass
 
 
 class DMORLTrainer(PADPPTrainer):
@@ -45,6 +63,13 @@ class DMORLTrainer(PADPPTrainer):
                          offline_evaluator, online_evaluator, loggers,
                          generation_method)
         self.dmorl_controller = dmorl_controller
+
+        if getattr(model_config, "debug", False):
+            if self.loggers is None:
+                self.loggers = []
+            self.loggers.append(DebugLogger())
+            _llm_ctrl.enable_debug(True)
+            loguru_logger.info("[DMORL] Debug mode ON — LLM prompts, rewards, and losses will be printed.")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Phase 1a: Basic Skills Curriculum
@@ -81,6 +106,13 @@ class DMORLTrainer(PADPPTrainer):
 
         self.model_config.num_train_rl_epochs = original_epochs
         loguru_logger.info("[DMORL Phase-1a] Basic skill curriculum complete.")
+
+        # Save Phase 1a checkpoint so later phases / reruns can load from it
+        saved_dir = getattr(self.model_config, "saved_dir", "checkpoints")
+        os.makedirs(saved_dir, exist_ok=True)
+        ckpt_path = os.path.join(saved_dir, "dmorl_phase1a.pth")
+        self.save_model(ckpt_path)
+        loguru_logger.info(f"[DMORL Phase-1a] Checkpoint saved → {ckpt_path}")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Phase 1b: Advanced Skills
@@ -186,6 +218,13 @@ class DMORLTrainer(PADPPTrainer):
 
                     # Buffer element: [state_dict, reward, 1, abs(done)]
                     buffer.append([old_state, reward, 1, abs(done_flag)])
+
+                    if getattr(self.model_config, "debug", False):
+                        r_val = reward.item() if hasattr(reward, "item") else float(reward)
+                        loguru_logger.debug(
+                            f"[DEBUG|Curriculum] epoch={train_step} t={t} "
+                            f"action={action} reward={r_val:.4f} done={done_flag}"
+                        )
 
                     if done:
                         break
@@ -363,5 +402,18 @@ class DMORLTrainer(PADPPTrainer):
 
         for lgr in self.loggers:
             lgr.record(results, self.ppo_global_step)
+
+        # Save evaluation dialogues when debug mode is active
+        if getattr(self.model_config, "debug", False) and convs:
+            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            out_dir = os.path.join(
+                getattr(self.model_config, "debug_output_dir", "debug_output"),
+                f"eval_dialogues_{ts}",
+            )
+            os.makedirs(out_dir, exist_ok=True)
+            for i, conv in enumerate(convs):
+                with open(os.path.join(out_dir, f"dialogue_{i:04d}.json"), "w", encoding="utf-8") as fh:
+                    json.dump(conv, fh, ensure_ascii=False, indent=2)
+            loguru_logger.info(f"[DMORL DEBUG] Saved {len(convs)} eval dialogues → {out_dir}")
 
         return results

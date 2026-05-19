@@ -37,6 +37,25 @@ Usage examples:
       --loggers terminal,file \
       --n_basic_skills 5 \
       --n_advanced_skills 5
+
+  # ── Phase 1a debug test (fast, negotiation, no Phase 1b/2) ──────────────────
+  # Run this first to verify the curriculum loop works end-to-end on the server.
+  # Checkpoint is saved to checkpoints/.../dmorl_phase1a.pth automatically.
+  # Eval dialogues are written to debug_output/eval_dialogues_<timestamp>/.
+  python run_dmorl.py \
+      --scenario negotiation \
+      --datasets craigslist_bargain \
+      --models dmorl \
+      --gen_models chatgpt \
+      --metrics sr,deal_rate,sl_ratio,fairness,avg_turn \
+      --loggers terminal,file \
+      --n_basic_skills 2 \
+      --n_skill_train_epochs 3 \
+      --num_train_rl_epochs 3 \
+      --run_curriculum \
+      --no_dynamic_weight \
+      --phase1a_only \
+      --debug
 """
 
 import os
@@ -86,6 +105,12 @@ def parse_dmorl_args():
     dmorl_parser.add_argument('--run_curriculum', action='store_true', default=None)
     dmorl_parser.add_argument('--no_curriculum', dest='run_curriculum', action='store_false')
     dmorl_parser.add_argument('--force_rediscover_skills', action='store_true')
+    dmorl_parser.add_argument('--phase1a_only', action='store_true', default=False,
+                               help='Stop after Phase 1a and save checkpoint (for isolated testing)')
+    dmorl_parser.add_argument('--debug', action='store_true', default=False,
+                               help='Print LLM prompts/outputs, per-step rewards/losses, save eval dialogues')
+    dmorl_parser.add_argument('--debug_output_dir', type=str, default=None,
+                               help='Directory for debug artefacts (default: debug_output)')
 
     import sys
     dmorl_extra, _ = dmorl_parser.parse_known_args(sys.argv[1:])

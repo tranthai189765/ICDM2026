@@ -115,6 +115,10 @@ class DMORLPipeline(PADPPPipeline):
                 logger.info("[DMORL] Phase 1a: Basic skill curriculum ...")
                 self.run_basic_skills()
 
+                if getattr(self.model_config, "phase1a_only", False):
+                    logger.info("[DMORL] phase1a_only=True — stopping after Phase 1a.")
+                    return offline_eval_results, None
+
                 logger.info("[DMORL] Phase 1b: Advanced skill training ...")
                 self.run_advanced_skills()
 
