@@ -85,6 +85,7 @@ class SkillLibrary:
         self.n_objectives = n_objectives
         self.skills_file = skills_file
         self.skill_log_file = skill_log_file
+        self._skill_log_initialized = False  # first write this run → "w", rest → "a"
         self.basic_skills: List[Dict] = []
         self.advanced_skills: List[Dict] = []
 
@@ -130,10 +131,11 @@ class SkillLibrary:
         lines += ["", sep, ""]
 
         try:
-            import os as _os
-            _os.makedirs(_os.path.dirname(self.skill_log_file) or ".", exist_ok=True)
-            with open(self.skill_log_file, "a", encoding="utf-8") as f:
+            os.makedirs(os.path.dirname(self.skill_log_file) or ".", exist_ok=True)
+            mode = "w" if not self._skill_log_initialized else "a"
+            with open(self.skill_log_file, mode, encoding="utf-8") as f:
                 f.write("\n".join(lines) + "\n")
+            self._skill_log_initialized = True
         except Exception as e:
             logger.warning(f"[SkillLibrary] Could not write skill log ({e})")
 
@@ -320,39 +322,8 @@ class SkillLibrary:
                 f"[SkillLibrary] Loaded {len(self.basic_skills)} basic + "
                 f"{len(self.advanced_skills)} advanced skills."
             )
-            self._log_loaded_skills()
             return True
         return False
-
-    def _log_loaded_skills(self) -> None:
-        """Log skills loaded from cache file (no LLM call this run)."""
-        if not self.skill_log_file:
-            return
-        sep = "=" * 70
-        ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        lines = [
-            sep,
-            f"SKILLS LOADED FROM CACHE: {self.skills_file}",
-            f"Timestamp: {ts}",
-            sep,
-            "",
-        ]
-        for phase, skills in [("basic", self.basic_skills), ("advanced", self.advanced_skills)]:
-            lines.append(f"[{phase.upper()} SKILLS]")
-            for i, s in enumerate(skills, 1):
-                wv = s.get("weight_vector", [])
-                wv_str = "  ".join(f"obj{j}={wv[j]:.4f}" for j in range(len(wv)))
-                lines.append(f"  {i}. {s.get('name', '?')}")
-                lines.append(f"     {s.get('description', '')}")
-                lines.append(f"     Weights: {wv_str}")
-            lines.append("")
-        lines += [sep, ""]
-        try:
-            os.makedirs(os.path.dirname(self.skill_log_file) or ".", exist_ok=True)
-            with open(self.skill_log_file, "a", encoding="utf-8") as f:
-                f.write("\n".join(lines) + "\n")
-        except Exception as e:
-            logger.warning(f"[SkillLibrary] Could not write skill log ({e})")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
