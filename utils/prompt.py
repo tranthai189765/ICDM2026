@@ -24,13 +24,15 @@ load_dotenv()
 
 
 @retry(
-    retry=retry_if_exception_type((openai.error.APIError, openai.error.APIConnectionError, openai.error.RateLimitError,
-                                   openai.error.ServiceUnavailableError, openai.error.Timeout)),
+    retry=retry_if_exception_type((openai.APIError, openai.APIConnectionError, openai.RateLimitError,
+                                   openai.APIStatusError, openai.APITimeoutError)),
     wait=wait_random_exponential(multiplier=1, max=60),
     stop=stop_after_attempt(10)
 )
 def chat_completion_with_backoff(**kwargs):
-    return openai.ChatCompletion.create(**kwargs)
+    # openai >= 1.0 client-based call (ChatGPT path is currently disabled via assert)
+    _client = openai.OpenAI(api_key=API_KEY)
+    return _client.chat.completions.create(**kwargs)
 
 
 # load the environment variables
@@ -39,7 +41,7 @@ load_dotenv()
 # The api key, llm model
 API_KEY = os.getenv("API_KEY")
 MODEL = LLM_MODEL
-openai.api_key = API_KEY
+# openai.api_key is set per-call via OpenAI(api_key=...) in openai >= 1.0
 
 # API for toxicity evaluation
 PERSPECTIVE_API_KEY = os.getenv('PERSPECTIVE_KEY')
