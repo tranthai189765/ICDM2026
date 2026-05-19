@@ -124,7 +124,7 @@ class Trainer(ABC):
         :param load_file_path: the path to the checkpoint
         :return:
         """
-        self.model = torch.load(load_file_path)
+        self.model = torch.load(load_file_path, weights_only=False)
 
     def predict(self, instance):
         """
