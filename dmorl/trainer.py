@@ -220,10 +220,13 @@ class DMORLTrainer(PADPPTrainer):
                     buffer.append([old_state, reward, 1, abs(done_flag)])
 
                     if getattr(self.model_config, "debug", False):
-                        r_val = reward.item() if hasattr(reward, "item") else float(reward)
+                        r_list = reward.squeeze().tolist()
+                        if not isinstance(r_list, list):
+                            r_list = [r_list]
+                        r_str = "[" + ", ".join(f"{v:.4f}" for v in r_list) + "]"
                         loguru_logger.debug(
                             f"[DEBUG|Curriculum] epoch={train_step} t={t} "
-                            f"action={action} reward={r_val:.4f} done={done_flag}"
+                            f"action={action} reward={r_str} done={done_flag}"
                         )
 
                     if done:
