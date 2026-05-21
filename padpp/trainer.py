@@ -946,7 +946,7 @@ class PADPPTrainer(Trainer):
             # predict the action
             for batch in data_loader:
                 w_gpi = random_weights(self.model_config.n_objectives, n=n)
-                w_gpi = torch.Tensor(w_gpi).unsqueeze(1)
+                w_gpi = torch.Tensor(w_gpi).unsqueeze(1).to(self.device)
 
                 # compute the state representation
                 reward = None

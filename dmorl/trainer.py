@@ -335,7 +335,7 @@ class DMORLTrainer(PADPPTrainer):
                     action, _, _ = self.predict(
                         state, torch.FloatTensor(w).to(self.device),
                         action_mapping, is_computing_reward=False,
-                        use_gpi=(fixed_weight is None)   # use GPI in Phase 1b
+                        use_gpi=(phase == "1b")   # GPI only in Phase 1b
                     )
 
                     state, reward, done, _ = self.game.step(
