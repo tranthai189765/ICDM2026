@@ -36,6 +36,7 @@ class DMORLConfig(PADPPConfig):
     run_curriculum = True              # If False, skip phases 1a/1b and go straight to PADPP RLT
     force_rediscover_skills = True     # Always re-query LLM for skills each run
     phase1a_only = False               # Stop after Phase 1a (for isolated testing)
+    phase1a_eval_episodes = 3          # Eval dialogues per basic skill after Phase 1a
 
     # Debug mode
     debug = False                      # Print LLM prompts/outputs, per-step rewards/losses

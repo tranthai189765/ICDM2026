@@ -200,6 +200,7 @@ from text_gen.bart_generation import BARTGeneration, BARTGenerationConfig, BARTT
 from text_gen.chatgpt_generation import ChatGPTGeneration, ChatGPTConfigForGeneration
 from text_gen.vicuna_generation import VicunaGeneration, VicunaGenerationConfig
 from text_gen.llama3_generation import Llama3Generation, Llama3ConfigForGeneration
+from text_gen.fpt_generation import FPTGeneration, FPTConfigForGeneration
 
 # loggers
 from logger.file_logger import FileLogger
@@ -1007,6 +1008,12 @@ def get_text_generation_model_by_name(scenario, names):
                 LLAMA3_PROMPT_FOR_RECOMMENDATION,
                 Llama3ConfigForGeneration,
                 Llama3Generation
+            ],
+            FPT: [
+                FPT_GENERATION_CONFIG_PATH,
+                FPT_PROMPT_FOR_RECOMMENDATION,
+                FPTConfigForGeneration,
+                FPTGeneration
             ]
         }
         # a list contains generation packages
@@ -1049,6 +1056,12 @@ def get_text_generation_model_by_name(scenario, names):
                 LLAMA3_PROMPT_FOR_NEGOTIATION,
                 Llama3ConfigForGeneration,
                 Llama3Generation
+            ],
+            FPT: [
+                FPT_GENERATION_CONFIG_PATH,
+                FPT_PROMPT_FOR_NEGOTIATION,
+                FPTConfigForGeneration,
+                FPTGeneration
             ]
         }
         # a list contains generation packages
@@ -1091,6 +1104,12 @@ def get_text_generation_model_by_name(scenario, names):
                 LLAMA3_PROMPT_FOR_EMOTIONAL_SUPPORT,
                 Llama3ConfigForGeneration,
                 Llama3Generation
+            ],
+            FPT: [
+                FPT_GENERATION_CONFIG_PATH,
+                FPT_PROMPT_FOR_EMOTIONAL_SUPPORT,
+                FPTConfigForGeneration,
+                FPTGeneration
             ]
         }
         # a list contains generation packages

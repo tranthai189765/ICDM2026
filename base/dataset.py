@@ -5,6 +5,7 @@ from collections import defaultdict
 import itertools
 import pickle
 
+from loguru import logger
 from config.constants import BIG5_PERSONALITY, DECISION_MAKING_STYLE
 
 

@@ -243,6 +243,10 @@ LLAMA3 = "llama3"
 LLAMA3_GENERATION_CONFIG_PATH = 'config/generation/LLAMA3.yaml'
 LLAMA3_MODEL = "meta-llama/Meta-Llama-3-8B-Instruct"
 
+# FPT-hosted Llama-3.3-70B (OpenAI-compatible API; credentials from .env)
+FPT = "fpt"
+FPT_GENERATION_CONFIG_PATH = 'config/generation/FPT.yaml'
+
 # prompts for llm generation
 CHATGPT = 'chatgpt'
 CHATGPT_GENERATION_CONFIG_PATH = 'config/generation/CHATGPT.yaml'
@@ -314,6 +318,11 @@ LLAMA3_PROMPT_FOR_EMOTIONAL_SUPPORT = [
                 "Please reply with only one short and succinct sentence. {}"
      }
 ]
+
+# FPT model reuses the same prompts as LLaMA3 (it also serves a Llama-family model)
+FPT_PROMPT_FOR_RECOMMENDATION = LLAMA3_PROMPT_FOR_RECOMMENDATION
+FPT_PROMPT_FOR_NEGOTIATION = LLAMA3_PROMPT_FOR_NEGOTIATION
+FPT_PROMPT_FOR_EMOTIONAL_SUPPORT = LLAMA3_PROMPT_FOR_EMOTIONAL_SUPPORT
 
 # the prompts for vicuna model
 # including prompts for recommendation, negotiation and emotional support

@@ -22,9 +22,9 @@ train_rl_batch_size: 128
 sampled_times: 50
 freeze_preference_backbone: true
 objective_embedding_size: 6
-num_train_q_network_epochs: 10
+num_train_q_network_epochs: 20
 buffer_length: 2000
-warmup_steps: 2000
+warmup_steps: 30
 # ── DMORL-specific ──────────────────────────────────────────────────────────
 n_basic_skills: 5
 n_advanced_skills: 5

@@ -18,7 +18,7 @@ from tenacity import (
     retry_if_exception_type
 )  # for exponential backoff
 
-from config.constants import LLM_MODEL, LLAMA3, CHATGPT, LLAMA3_MODEL
+from config.constants import LLM_MODEL, LLAMA3, CHATGPT, LLAMA3_MODEL, FPT
 
 load_dotenv()
 
@@ -45,6 +45,36 @@ MODEL = LLM_MODEL
 
 # API for toxicity evaluation
 PERSPECTIVE_API_KEY = os.getenv('PERSPECTIVE_KEY')
+
+# FPT cloud (OpenAI-compatible) — serves Llama-3.3-70B-Instruct
+FPT_API_KEY = os.getenv("FPT_API_KEY")
+FPT_API_URL = os.getenv("FPT_API_URL", "https://mkp-api.fptcloud.com/v1/chat/completions")
+FPT_MODEL = os.getenv("FPT_MODEL", "Llama-3.3-70B-Instruct")
+# OpenAI client wants a base_url (no /chat/completions suffix)
+_FPT_BASE_URL = FPT_API_URL.rsplit("/chat/completions", 1)[0]
+_fpt_client = None
+
+
+def _get_fpt_client():
+    global _fpt_client
+    if _fpt_client is None:
+        _fpt_client = openai.OpenAI(api_key=FPT_API_KEY, base_url=_FPT_BASE_URL)
+    return _fpt_client
+
+
+def call_fpt_model(messages, temperature=0.0, max_token=256, n_return_sequences=1):
+    """Call FPT-hosted Llama-3.3-70B-Instruct via the OpenAI-compatible API."""
+    client = _get_fpt_client()
+    results = []
+    for _ in range(n_return_sequences):
+        resp = client.chat.completions.create(
+            model=FPT_MODEL,
+            messages=messages,
+            temperature=max(temperature, 0.01),  # FPT rejects temperature=0 in some cases
+            max_tokens=max_token,
+        )
+        results.append(resp.choices[0].message.content.strip())
+    return results[0] if n_return_sequences == 1 else results
 
 # Lazy-loaded globals — not instantiated until first use so that runs using
 # DeepInfra/ChatGPT don't pay the cost of downloading LLaMA3 (~16 GB) or the
@@ -150,6 +180,9 @@ def call_llm(prompt, n=1, temperature=0.0, max_token=10, model_type='chatgpt'):
         elif model_type == LLAMA3:
             # do something here
             responses.append(call_llama3_model(prompt, temperature, max_token))
+        # FPT-hosted Llama-3.3-70B-Instruct
+        elif model_type == FPT:
+            responses.append(call_fpt_model(prompt, temperature, max_token))
     return responses
 
 
@@ -240,6 +273,8 @@ def get_llm_based_assessment_for_recommendation(target_topic, simulated_conversa
     # calling the llama 3
     elif model_type == LLAMA3:
         responses.extend(call_llama3_model(messages, temperature, max_tokens, n_return_sequences=n))
+    elif model_type == FPT:
+        responses.extend(call_fpt_model(messages, temperature, max_tokens, n_return_sequences=n))
 
     # convert the text-based assessment to scalar based assessment
     # processing the llm's outputs
@@ -315,6 +350,8 @@ def get_llm_based_assessment_for_negotiation(simulated_conversation,
                 max_tokens=max_tokens
             )
             responses.append(response.choices[0]['message']['content'])
+    elif model_type == FPT:
+        responses.extend(call_fpt_model(messages, temperature, max_tokens, n_return_sequences=n))
     else:
         responses.extend(call_llama3_model(messages, temperature, max_tokens, n_return_sequences=n))
     # convert the text-based assessment to scalar based assessment
@@ -371,6 +408,8 @@ def get_llm_based_assessment_for_emotional_support(state,
     # calling the llama 3
     elif model_type == LLAMA3:
         responses.extend(call_llama3_model(messages, temperature, max_tokens, n_return_sequences=n))
+    elif model_type == FPT:
+        responses.extend(call_fpt_model(messages, temperature, max_tokens, n_return_sequences=n))
 
     # convert the text-based assessment to scalar based assessment
     # processing the llm's outputs

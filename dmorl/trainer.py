@@ -132,8 +132,11 @@ class DMORLTrainer(PADPPTrainer):
     def train_basic_skills(self, cases, device=None, simulators=None,
                            action_mapping=None):
         """
-        For each basic skill, run `n_skill_train_epochs` RL epochs with
-        the skill's weight vector held fixed.
+        Centralized Phase-1a training: at each episode randomly pick one of
+        the basic skills and run the agent with that weight vector. All N
+        skills share the same `n_skill_train_epochs` total budget.
+        After training, run a few evaluation dialogues per skill and dump
+        them to {saved_dir}/phase1a_eval/<skill_name>.json.
         """
         if not self.dmorl_controller:
             return
@@ -142,32 +145,102 @@ class DMORLTrainer(PADPPTrainer):
             loguru_logger.warning("[DMORL Phase-1a] No basic skills found. Skipping.")
             return
 
+        basic_weights = np.array([s["weight_vector"] for s in basic_skills])
+        skill_names = [s["name"] for s in basic_skills]
+
         loguru_logger.info(
-            f"[DMORL Phase-1a] Training {len(basic_skills)} basic skills "
-            f"x {self.model_config.n_skill_train_epochs} epochs each."
+            f"[DMORL Phase-1a] Centralized training on {len(basic_skills)} basic skills "
+            f"({self.model_config.n_skill_train_epochs} epochs total, skill sampled per episode)."
         )
 
         original_epochs = self.model_config.num_train_rl_epochs
         self.model_config.num_train_rl_epochs = self.model_config.n_skill_train_epochs
 
-        for skill in basic_skills:
-            w_fixed = np.array(skill["weight_vector"])
-            loguru_logger.info(
-                f"[DMORL Phase-1a] Skill: '{skill['name']}' | w={w_fixed.round(3)}"
-            )
-            self._run_curriculum_rlt(cases, device, simulators, action_mapping,
-                                     fixed_weight=w_fixed,
-                                     phase="1a", skill_name=skill["name"])
+        self._run_curriculum_rlt(
+            cases, device, simulators, action_mapping,
+            skill_weights=basic_weights, skill_names=skill_names, p_skill=1.0,
+            phase="1a", skill_name="centralized",
+        )
 
         self.model_config.num_train_rl_epochs = original_epochs
-        loguru_logger.info("[DMORL Phase-1a] Basic skill curriculum complete.")
+        loguru_logger.info("[DMORL Phase-1a] Centralized basic skill training complete.")
 
-        # Save Phase 1a checkpoint so later phases / reruns can load from it
+        # Save Phase 1a checkpoint
         saved_dir = getattr(self.model_config, "saved_dir", "checkpoints")
         os.makedirs(saved_dir, exist_ok=True)
         ckpt_path = os.path.join(saved_dir, "dmorl_phase1a.pth")
         self.save_model(ckpt_path)
         loguru_logger.info(f"[DMORL Phase-1a] Checkpoint saved → {ckpt_path}")
+
+        # Per-skill evaluation: run each skill, save dialogues to JSON
+        self._eval_basic_skills_per_skill(cases, device, simulators, action_mapping, basic_skills)
+
+    def _eval_basic_skills_per_skill(self, cases, device, simulators,
+                                       action_mapping, basic_skills):
+        """For each basic skill, run N eval episodes with that fixed weight
+        and dump dialogues to {saved_dir}/phase1a_eval/<skill>.json."""
+        out_dir = os.path.join(
+            getattr(self.model_config, "saved_dir", "checkpoints"),
+            "phase1a_eval",
+        )
+        os.makedirs(out_dir, exist_ok=True)
+        n_eval = getattr(self.model_config, "phase1a_eval_episodes", 3)
+        max_horizon = getattr(self.game_config, "max_horizon", 10)
+
+        self.model.to(self.device)
+        self.model.eval()
+
+        for skill in basic_skills:
+            w_fixed = np.array(skill["weight_vector"])
+            episodes = []
+            for ep_idx in range(n_eval):
+                case = np.random.choice(cases)
+                simulator = np.random.choice(simulators)
+                state = self.game.reset(case, simulator)
+                state['w'] = w_fixed
+
+                turns = []
+                done = 0
+                final_reward = None
+                for t in count():
+                    pre_dialogue = list(state.get('dialogue_context', []))
+                    action, _, _ = self.predict(
+                        state, torch.FloatTensor(w_fixed).to(self.device),
+                        action_mapping, is_computing_reward=False, use_gpi=False,
+                    )
+                    state, reward, done, _ = self.game.step(
+                        state, action, self.generation_method, simulator
+                    )
+                    new_dialogue = list(state.get('dialogue_context', []))
+                    new_utts = new_dialogue[len(pre_dialogue):]
+                    final_reward = reward if isinstance(reward, list) else [float(reward)]
+                    turns.append({
+                        "step": t,
+                        "action": str(action),
+                        "utterances": new_utts,
+                        "reward": final_reward,
+                        "done": int(bool(done)),
+                    })
+                    if done or t >= max_horizon:
+                        break
+
+                episodes.append({
+                    "episode": ep_idx,
+                    "skill": skill["name"],
+                    "weight_vector": [float(x) for x in w_fixed.tolist()],
+                    "outcome": "success" if done == 1 else ("failure" if done == -1 else "ongoing"),
+                    "n_turns": len(turns),
+                    "final_reward": final_reward,
+                    "turns": turns,
+                })
+
+            safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in skill["name"])
+            out_path = os.path.join(out_dir, f"{safe}.json")
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(episodes, f, indent=2, default=str, ensure_ascii=False)
+            loguru_logger.info(
+                f"[Phase-1a Eval] {skill['name']}: {n_eval} dialogues → {out_path}"
+            )
 
     # ─────────────────────────────────────────────────────────────────────────
     # Phase 1b: Advanced Skills
@@ -207,12 +280,13 @@ class DMORLTrainer(PADPPTrainer):
     # ─────────────────────────────────────────────────────────────────────────
 
     def _run_curriculum_rlt(self, cases, device, simulators, action_mapping,
-                             fixed_weight=None, skill_weights=None, p_skill=1.0,
-                             phase="1a", skill_name=""):
+                             fixed_weight=None, skill_weights=None, skill_names=None,
+                             p_skill=1.0, phase="1a", skill_name=""):
         """
         Run `num_train_rl_epochs` of GPI TD-learning.
-        - fixed_weight: use this w for every episode (Phase 1a)
-        - skill_weights + p_skill: probabilistically sample from skill_weights (Phase 1b)
+        - fixed_weight: use this w for every episode
+        - skill_weights + p_skill: probabilistically sample from skill_weights
+        - skill_names: names for each row of skill_weights (used in CSV log)
         """
         self.model.to(self.device)
 
@@ -243,11 +317,14 @@ class DMORLTrainer(PADPPTrainer):
                 # Weight selection
                 if fixed_weight is not None:
                     w = fixed_weight
+                    current_skill = skill_name
                 elif skill_weights is not None and np.random.random() < p_skill:
                     idx = np.random.randint(0, len(skill_weights))
                     w = skill_weights[idx]
+                    current_skill = skill_names[idx] if skill_names else f"skill_{idx}"
                 else:
                     w = random_weights(self.model_config.n_objectives)[0]
+                    current_skill = "random"
 
                 state['w'] = w
                 done = False
@@ -284,7 +361,7 @@ class DMORLTrainer(PADPPTrainer):
                     # CSV reward logging (always on)
                     self.csv_logger.log_reward(
                         epoch=train_step, episode=episode_counter, step=t,
-                        phase=phase, skill=skill_name,
+                        phase=phase, skill=current_skill,
                         action=action, rewards=r_list, done=done_flag,
                     )
 

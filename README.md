@@ -200,6 +200,7 @@ epoch,episode,step,phase,skill,action,done,r0,r1,r2
 | File | Written by | Format | Description |
 |---|---|---|---|
 | `skill_discovery.txt` | `SkillLibrary` | Plain text | Full LLM prompt + raw response + parsed skills for every Phase 1a/1b discovery call |
+| `phase1a_eval/<skill>.json` | `DMORLTrainer._eval_basic_skills_per_skill` | JSON | After Phase 1a centralized training, runs `phase1a_eval_episodes` dialogues per basic skill with that skill's weight vector; each file contains the conversation turns, actions, rewards, and outcome |
 
 `skill_discovery.txt` example:
 
