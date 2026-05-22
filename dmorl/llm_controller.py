@@ -70,6 +70,21 @@ def _parse_json_block(text: str) -> any:
     return json.loads(text)
 
 
+def _format_objective_glossary(objective_names: List[str],
+                                objective_descriptions: Dict[str, str] = None) -> str:
+    """Build a short glossary block to ground the LLM on objective semantics.
+    Returns an empty string when no descriptions are available, so the
+    surrounding prompt remains clean."""
+    if not objective_descriptions:
+        return ""
+    lines = ["Objective semantics:"]
+    for name in objective_names:
+        desc = objective_descriptions.get(name)
+        if desc:
+            lines.append(f"  - {name}: {desc}")
+    return "\n".join(lines) + "\n\n"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Skill Library
 # ─────────────────────────────────────────────────────────────────────────────
@@ -142,12 +157,14 @@ class SkillLibrary:
     # ── LLM-based discovery ──────────────────────────────────────────────────
 
     def discover_basic_skills(self, scenario: str, objective_names: List[str],
-                               n: int = 5) -> List[Dict]:
+                               n: int = 5,
+                               objective_descriptions: Dict[str, str] = None) -> List[Dict]:
         """
         Ask the LLM to propose N basic dialogue skills and map each to a
         weight vector over the objectives.
         """
         obj_str = ", ".join(objective_names)
+        glossary = _format_objective_glossary(objective_names, objective_descriptions)
         messages = [
             {
                 "role": "system",
@@ -160,7 +177,8 @@ class SkillLibrary:
                 "role": "user",
                 "content": (
                     f"Scenario: {scenario}.\n"
-                    f"Objectives (in order): [{obj_str}].\n\n"
+                    f"Objectives (in order): [{obj_str}].\n"
+                    f"{glossary}"
                     f"Please propose exactly {n} BASIC dialogue skills for this scenario. "
                     "These should be simple, foundational skills that cover diverse strategy profiles.\n\n"
                     "For each skill provide:\n"
@@ -168,6 +186,7 @@ class SkillLibrary:
                     "  - description: one-sentence description\n"
                     "  - weight_vector: a list of non-negative floats (one per objective) that sum to 1.0, "
                     "reflecting how much this skill prioritises each objective.\n\n"
+                    f"The weight_vector MUST have exactly {len(objective_names)} entries, one per objective in the order above.\n\n"
                     "Respond with ONLY a JSON array, no extra text. Example format:\n"
                     "```json\n"
                     "[\n"
@@ -206,12 +225,14 @@ class SkillLibrary:
             return fallback
 
     def discover_advanced_skills(self, scenario: str, objective_names: List[str],
-                                  m: int = 5) -> List[Dict]:
+                                  m: int = 5,
+                                  objective_descriptions: Dict[str, str] = None) -> List[Dict]:
         """
         Ask the LLM to propose M advanced skills, building on the basic ones.
         Advanced skills model more nuanced, context-dependent strategies.
         """
         obj_str = ", ".join(objective_names)
+        glossary = _format_objective_glossary(objective_names, objective_descriptions)
         basic_summary = "\n".join(
             f"  - {s['name']}: {s['description']}" for s in self.basic_skills
         ) or "  (none yet)"
@@ -227,7 +248,8 @@ class SkillLibrary:
                 "role": "user",
                 "content": (
                     f"Scenario: {scenario}.\n"
-                    f"Objectives (in order): [{obj_str}].\n\n"
+                    f"Objectives (in order): [{obj_str}].\n"
+                    f"{glossary}"
                     f"We already have these BASIC skills:\n{basic_summary}\n\n"
                     f"Please propose exactly {m} ADVANCED dialogue skills. "
                     "These should be more nuanced, mixing objectives in sophisticated ways "
@@ -236,6 +258,7 @@ class SkillLibrary:
                     "  - name: short skill name\n"
                     "  - description: one-sentence description\n"
                     "  - weight_vector: a list of non-negative floats (one per objective) summing to 1.0.\n\n"
+                    f"The weight_vector MUST have exactly {len(objective_names)} entries, one per objective in the order above.\n\n"
                     "Respond with ONLY a JSON array, no extra text. Example format:\n"
                     "```json\n"
                     "[\n"
@@ -493,9 +516,11 @@ class DMORLController:
         skills_file: str = "dmorl_skills.json",
         hints_file: str = "dmorl_hints.json",
         skill_log_file: str = None,
+        objective_descriptions: Dict[str, str] = None,
     ):
         self.n_objectives = n_objectives
         self.objective_names = objective_names
+        self.objective_descriptions = objective_descriptions or {}
         self.scenario = scenario
         self.n_basic_skills = n_basic_skills
         self.n_advanced_skills = n_advanced_skills
@@ -514,11 +539,13 @@ class DMORLController:
             return
         logger.info("[DMORLController] Discovering basic skills via LLM ...")
         self.skill_library.discover_basic_skills(
-            self.scenario, self.objective_names, self.n_basic_skills
+            self.scenario, self.objective_names, self.n_basic_skills,
+            objective_descriptions=self.objective_descriptions,
         )
         logger.info("[DMORLController] Discovering advanced skills via LLM ...")
         self.skill_library.discover_advanced_skills(
-            self.scenario, self.objective_names, self.n_advanced_skills
+            self.scenario, self.objective_names, self.n_advanced_skills,
+            objective_descriptions=self.objective_descriptions,
         )
         self.skill_library.save()
 

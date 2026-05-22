@@ -580,6 +580,10 @@ class NegotiationGame(Game):
         # SR / deal_rate (YAML uses "deal_rate"; constants has both "sr" and "deal_rate")
         if SUCCESS_RATE in self.game_config.objectives or DEAL_RATE in self.game_config.objectives:
             reward.append(neg_sr)
+        # avg_turn: constant -0.1 per turn, NOT subject to shaping.
+        # Encourages closing deals quickly (fewer turns = smaller cumulative penalty).
+        if AVG_TURN in self.game_config.objectives:
+            reward.append(turn_reward)   # turn_reward = -0.1 defined above
 
         logger.debug(f"reward={reward} done={done}")
         return reward, done, done

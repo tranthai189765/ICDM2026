@@ -142,6 +142,10 @@ class GameConfig(Config):
         super().__init__()
         for k, v in params.items():
             setattr(self, k, v)
+        # YAML may override `objectives`; recompute n_objectives accordingly
+        # so the model's n_objectives matches the actual reward vector length.
+        if hasattr(self, 'objectives') and self.objectives is not None:
+            self.n_objectives = len(self.objectives)
 
 
 class RecommendationGameConfig(GameConfig):
@@ -179,7 +183,7 @@ class NegotiationGameConfig(GameConfig):
     epsilon = 1.0
     terminated_action = "Say goodbye"
     max_horizon = 5
-    objectives = [SL_RATIO, FAIRNESS, SUCCESS_RATE]
+    objectives = [SL_RATIO, FAIRNESS, SUCCESS_RATE, AVG_TURN]
     n_objectives = len(objectives)
     pass
 

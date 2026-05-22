@@ -32,8 +32,24 @@ from text_gen.bart_generation import BARTGeneration
 # Objective name maps per scenario (must match config.constants metric names)
 SCENARIO_OBJECTIVE_NAMES = {
     "recommendation":   ["user_reward", "item_freq"],
-    "negotiation":      ["sl_ratio", "fairness", "deal_rate"],
+    "negotiation":      ["sl_ratio", "fairness", "deal_rate", "avg_turn"],
     "emotional_support": ["user_reward", "toxicity", "avg_turn"],
+}
+
+# Short human-readable semantics for each objective, used to ground the LLM
+# during skill discovery (so it understands e.g. that avg_turn is a per-turn
+# PENALTY and a high weight on it means "prefer closing fast").
+OBJECTIVE_DESCRIPTIONS = {
+    # Negotiation (agent acts as the buyer)
+    "sl_ratio":    "Reward in [0, 1]: 1.0 = agent (buyer) secured a very low price; 0.5 = midpoint; 0.0 = paid the seller's full ask. Higher weight => agent is more price-aggressive.",
+    "fairness":    "Reward in [-0.5, 0.5], max 0.5 when the proposed price equals the midpoint between buyer's target and seller's ask. Higher weight => agent prefers equitable mid-range outcomes.",
+    "deal_rate":   "Binary terminal reward, 1.0 if a deal is closed, 0.0 if the conversation times out. Higher weight => agent strongly prefers reaching ANY agreement.",
+    "avg_turn":    "Constant per-turn PENALTY of -0.1 (negative); the longer the dialogue the larger the cumulative penalty. Higher weight => agent strongly prefers closing in fewer turns (urgency).",
+    # Recommendation
+    "user_reward": "User satisfaction with the recommended item (positive = liked).",
+    "item_freq":   "Coverage of the long-tail item space (positive = recommending diverse items).",
+    # Emotional support
+    "toxicity":    "Negative toxicity score; higher weight => agent avoids harmful language.",
 }
 
 
@@ -49,11 +65,16 @@ class DMORLPipeline(PADPPPipeline):
         objective_names = SCENARIO_OBJECTIVE_NAMES.get(
             scenario, [f"obj_{i}" for i in range(self.model_config.n_objectives)]
         )
+        objective_descriptions = {
+            name: OBJECTIVE_DESCRIPTIONS[name]
+            for name in objective_names if name in OBJECTIVE_DESCRIPTIONS
+        }
         saved_dir = getattr(self.model_config, "saved_dir", "checkpoints")
         skill_log_file = os.path.join(saved_dir, "skill_discovery.txt")
         controller = DMORLController(
             n_objectives=self.model_config.n_objectives,
             objective_names=objective_names,
+            objective_descriptions=objective_descriptions,
             scenario=scenario,
             n_basic_skills=self.model_config.n_basic_skills,
             n_advanced_skills=self.model_config.n_advanced_skills,

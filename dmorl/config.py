@@ -68,11 +68,13 @@ class DMORLConfigForNegotiation(DMORLConfig):
     # signal is weaker per step, and 5e-4 caused loss to plateau at ~0.07
     # after only 8 epochs (Q overshooting then oscillating).
     actor_learning_rate = 2e-4
+    # 4 objectives: sl_ratio, fairness, deal_rate, avg_turn
     obj_to_weight = {
         "uniform": None,
-        "sl_ratio": [1.0, 0.0, 0.0],
-        "fairness": [0.0, 1.0, 0.0],
-        "deal_rate": [0.0, 0.0, 1.0],
+        "sl_ratio":  [1.0, 0.0, 0.0, 0.0],
+        "fairness":  [0.0, 1.0, 0.0, 0.0],
+        "deal_rate": [0.0, 0.0, 1.0, 0.0],
+        "avg_turn":  [0.0, 0.0, 0.0, 1.0],
     }
 
 
