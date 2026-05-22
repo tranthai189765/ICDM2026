@@ -563,19 +563,25 @@ class NegotiationGame(Game):
                 pass
 
         # vector-valued reward function
+        # Intermediate steps (done=0) get a 10x-attenuated shaping signal so
+        # the agent cannot "reward-hack" by anchoring at a buyer-favorable
+        # price forever without closing a deal. Terminal steps keep the full
+        # sl_ratio / fairness signal so the actual deal quality matters.
+        shaping = 1.0 if done != 0 else 0.1
+
         reward = []
 
         # sale-list ratio
         if SL_RATIO in self.game_config.objectives:
-            reward.append(sl_ratio)
+            reward.append(shaping * sl_ratio)
         # fairness
         if FAIRNESS in self.game_config.objectives:
-            reward.append(fairness)
+            reward.append(shaping * fairness)
         # SR / deal_rate (YAML uses "deal_rate"; constants has both "sr" and "deal_rate")
         if SUCCESS_RATE in self.game_config.objectives or DEAL_RATE in self.game_config.objectives:
             reward.append(neg_sr)
 
-        logger.debug(f"reward={reward}")
+        logger.debug(f"reward={reward} done={done}")
         return reward, done, done
 
 

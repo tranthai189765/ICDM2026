@@ -252,13 +252,28 @@ def construct_prompt_for_chat_gpt_response_generation_negotiation(state, prompt)
             # following https://arxiv.org/pdf/2010.09954
             # 4 actions propose, counter, agree and disagree must to be followed by a particular price.
             if strategy == "propose":
-                goal_description = f". Please propose the price of ${proposed_priced}."
-            if strategy == "counter":
-                goal_description = f". Please counter the seller with the price of ${proposed_priced}."
+                goal_description = (
+                    f". Please propose the price of ${proposed_priced} explicitly. "
+                    "Do not accept any other price."
+                )
+            elif strategy == "counter":
+                goal_description = (
+                    f". Please counter the seller with the price of ${proposed_priced} explicitly. "
+                    "Do not accept any other price."
+                )
             elif strategy == "agree":
-                goal_description = f". Please agree with the price of ${proposed_priced}."
-            # elif strategy == "disagree":
-            #     goal_description = f". Please disagree with the price of ${proposed_priced}."
+                # 'agree' MUST mean accepting the seller's most recent offer,
+                # otherwise the agent ends up generating a counter disguised as agree
+                # (this previously caused 'agree' actions to never close deals).
+                goal_description = (
+                    ". Please clearly ACCEPT the seller's most recent offered price. "
+                    "State 'I accept your offer of $<their last price>' and do not propose a different price."
+                )
+            elif strategy == "disagree":
+                goal_description = (
+                    ". Please clearly REJECT the seller's offer without proposing a new price. "
+                    "State that the price is unacceptable."
+                )
             logger.debug(f"goal_description: {goal_description}")
         else:
             goal_description = pred_goal

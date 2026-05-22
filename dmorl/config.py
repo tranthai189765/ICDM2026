@@ -64,7 +64,10 @@ class DMORLConfigForNegotiation(DMORLConfig):
     combined_action = True
     special_tokens_dict = neg_special_tokens_dict
     n_topics = 5
-    actor_learning_rate = 5e-4
+    # Lowered from 5e-4 to 2e-4: with sparse intermediate rewards the loss
+    # signal is weaker per step, and 5e-4 caused loss to plateau at ~0.07
+    # after only 8 epochs (Q overshooting then oscillating).
+    actor_learning_rate = 2e-4
     obj_to_weight = {
         "uniform": None,
         "sl_ratio": [1.0, 0.0, 0.0],
