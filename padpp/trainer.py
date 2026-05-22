@@ -209,7 +209,10 @@ class PADPPTrainer(Trainer):
             loss = criterion(logits, batch['labels']) / \
                 self.model_config.gradient_accumulation_steps
             self.accelerator.backward(loss)
-            train_loss.append(float(loss))
+            # .item() detaches from the autograd graph; using float(loss) on a
+            # requires_grad tensor triggers a PyTorch warning and can keep the
+            # graph alive longer than needed.
+            train_loss.append(loss.item())
 
             self.progress_bar.update(1)
             self.global_step += 1
@@ -247,7 +250,7 @@ class PADPPTrainer(Trainer):
                     logits = self.model(batch)
                     loss = criterion(logits, batch['labels'])
                     self.offline_evaluator.record(logits, batch['labels'])
-                    dev_loss.append(float(loss))
+                    dev_loss.append(loss.item())
 
         dev_loss = np.mean(dev_loss) * \
             self.model_config.gradient_accumulation_steps

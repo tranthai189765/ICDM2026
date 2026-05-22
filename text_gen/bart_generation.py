@@ -193,7 +193,7 @@ class BARTTrainerForGeneration(Trainer):
         for step, batch in enumerate(data_loader):
             logits, loss = self.model(batch)
             self.accelerator.backward(loss)
-            train_loss.append(float(loss))
+            train_loss.append(loss.item())
 
             self.progress_bar.update(1)
             self.global_step += 1
@@ -235,7 +235,7 @@ class BARTTrainerForGeneration(Trainer):
             # compute validation loss
             with torch.no_grad():
                 _, loss = self.model(batch)
-                dev_loss.append(float(loss))
+                dev_loss.append(loss.item())
 
             # generate the output sequence
             gen_seqs = self.accelerator.unwrap_model(self.model.plm).generate(

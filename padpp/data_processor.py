@@ -127,7 +127,10 @@ class PADPPTorchDataset(BaseTorchDataset):
 
         # the label and the preference weights
         labels = torch.LongTensor(labels).to(self.device)
-        weights = torch.Tensor(weights).to(self.device)
+        # Convert via np.array first to silence the "creating a tensor from a
+        # list of numpy.ndarrays is extremely slow" warning and actually speed
+        # up the conversion (single contiguous array vs. per-element copy).
+        weights = torch.from_numpy(np.asarray(weights, dtype=np.float32)).to(self.device)
 
         if len(next_input_features) > 0:
             # padding the input features

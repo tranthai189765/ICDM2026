@@ -65,6 +65,15 @@ import time
 # ── Silence terminal output ───────────────────────────────────────────────────
 os.environ["TQDM_DISABLE"] = "1"   # disable all tqdm bars
 
+# Silence misleading HuggingFace tokenizer warning "Token indices sequence
+# length is longer than the specified maximum sequence length (NNN > 512)".
+# The tokenize() call below manually truncates with input_ids[-(max-2):], so
+# there will be no indexing errors — the warning is just preemptive noise.
+import warnings as _warnings
+import transformers as _transformers
+_transformers.logging.set_verbosity_error()
+_warnings.filterwarnings("ignore", category=UserWarning, module="transformers")
+
 from dotenv import load_dotenv
 from accelerate import Accelerator, DistributedDataParallelKwargs
 from loguru import logger
