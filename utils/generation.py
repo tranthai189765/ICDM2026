@@ -1,4 +1,6 @@
 import copy
+import re
+
 import numpy as np
 from loguru import logger
 
@@ -221,6 +223,24 @@ def construct_prompt_for_chat_gpt_response_generation_recommendation(state, prom
     return new_prompt, strategy_description
 
 
+_PRICE_PATTERN = re.compile(r"\$?\d[\d,]*\.?\d*")
+
+
+def _seller_has_offered_price(state) -> bool:
+    """Return True if any prior USER turn (the seller) mentioned a numeric price.
+    Used to disable 'agree' when there is no seller price to accept yet,
+    which would otherwise let the agent hallucinate a deal at turn 0."""
+    dialogue = state.get('dialogue_context', [])
+    for turn in dialogue:
+        if turn.get('role') == 'user':
+            content = turn.get('content', '') or ''
+            # Strip task_background-mentioned prices like buyer/seller listed price;
+            # we want an actual NEW number proposed in the conversation.
+            if _PRICE_PATTERN.search(content):
+                return True
+    return False
+
+
 def construct_prompt_for_chat_gpt_response_generation_negotiation(state, prompt):
     """
     method that construct the prompt for chatgpt response generation for the negotiation scenario
@@ -262,13 +282,25 @@ def construct_prompt_for_chat_gpt_response_generation_negotiation(state, prompt)
                     "Do not accept any other price."
                 )
             elif strategy == "agree":
-                # 'agree' MUST mean accepting the seller's most recent offer,
-                # otherwise the agent ends up generating a counter disguised as agree
-                # (this previously caused 'agree' actions to never close deals).
-                goal_description = (
-                    ". Please clearly ACCEPT the seller's most recent offered price. "
-                    "State 'I accept your offer of $<their last price>' and do not propose a different price."
-                )
+                # 'agree' must accept the seller's most recent offered price.
+                # BUT if no seller offer exists yet (e.g. turn 0), the LLM would
+                # hallucinate a price (often the seller's listed asking price)
+                # and the simulator would confirm it — giving the agent a
+                # zero-effort deal at the seller's full ask (sl_ratio = 0).
+                # When this happens we fall back to 'propose' so the agent must
+                # actually open the negotiation instead of capitulating.
+                has_seller_offer = _seller_has_offered_price(state)
+                if has_seller_offer:
+                    goal_description = (
+                        ". Please clearly ACCEPT the seller's most recent offered price. "
+                        "State 'I accept your offer of $<their last price>' and do not propose a different price."
+                    )
+                else:
+                    goal_description = (
+                        f". Please propose the price of ${proposed_priced} explicitly. "
+                        "Do not accept any other price. The seller has not yet stated a price, "
+                        "so you cannot accept anything; open the negotiation with your own offer."
+                    )
             elif strategy == "disagree":
                 goal_description = (
                     ". Please clearly REJECT the seller's offer without proposing a new price. "
