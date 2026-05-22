@@ -563,11 +563,11 @@ class NegotiationGame(Game):
                 pass
 
         # vector-valued reward function
-        # Intermediate steps (done=0) get a 10x-attenuated shaping signal so
-        # the agent cannot "reward-hack" by anchoring at a buyer-favorable
-        # price forever without closing a deal. Terminal steps keep the full
-        # sl_ratio / fairness signal so the actual deal quality matters.
-        shaping = 1.0 if done != 0 else 0.1
+        # sl_ratio / fairness are attenuated 10x except at SUCCESSFUL terminal
+        # (done == 1). Both intermediate (done == 0) and timeout-failure
+        # (done == -1) get the small signal, so the agent cannot reward-hack
+        # by anchoring at a buyer-favorable price without closing a deal.
+        shaping = 1.0 if done == 1 else 0.1
 
         reward = []
 
