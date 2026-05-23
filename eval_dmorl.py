@@ -119,6 +119,10 @@ def _episode(trainer, case, simulator, action_mapping, w, skill_name, max_horizo
     sl = float(terminal[0]) if n_obj >= 1 else 0.0
     fair = float(terminal[1]) if n_obj >= 2 else 0.0
     deal_rate = float(terminal[2]) if n_obj >= 3 else 0.0
+    # Two ways to count "turns" — paper convention ambiguous so we report both:
+    #   - agent_steps: number of agent decisions (= conv_turn, max ~4 with max_horizon=10)
+    #   - utterance_count: total utterances in dialogue_context (= 2 initial + 2*agent_steps)
+    utterance_count = len(state['dialogue_context'])
     return {
         SUCCESS_RATE: int(done == 1),
         AVG_TURN: [conv_turn, 0],
@@ -127,38 +131,49 @@ def _episode(trainer, case, simulator, action_mapping, w, skill_name, max_horizo
         DEAL_RATE: deal_rate,
         'skill': skill_name,
         'n_turns': conv_turn,
+        'n_utterances': utterance_count,
         'done_flag': int(done),
     }
 
 
 def _aggregate(results):
     """Aggregate per-episode results into PADPP Table-2 columns.
-    Column names follow the paper: SR, avg.turn, r_gain, r_fair, r_deal."""
+    Column names follow the paper: SR, avg.turn, r_gain, r_fair, r_deal.
+
+    avg_turn here is the UTTERANCE count (= 2 initial + 2*agent_steps),
+    which matches what the PADPP paper reports in Table 2 (values 5-10).
+    For the raw agent decision count use `avg_steps` instead.
+    """
     n = max(len(results), 1)
     return {
-        'SR':       sum(r[SUCCESS_RATE] for r in results) / n,
-        'avg_turn': sum(r[AVG_TURN][0] for r in results) / n,
-        'r_gain':   sum(r[SL_RATIO]    for r in results) / n,
-        'r_fair':   sum(r[FAIRNESS]    for r in results) / n,
-        'r_deal':   sum(r[DEAL_RATE]   for r in results) / n,
-        'n':        n,
+        'SR':        sum(r[SUCCESS_RATE]    for r in results) / n,
+        'avg_turn':  sum(r['n_utterances'] for r in results) / n,   # paper-style
+        'avg_steps': sum(r[AVG_TURN][0]    for r in results) / n,   # agent decisions
+        'r_gain':    sum(r[SL_RATIO]       for r in results) / n,
+        'r_fair':    sum(r[FAIRNESS]       for r in results) / n,
+        'r_deal':    sum(r[DEAL_RATE]      for r in results) / n,
+        'n':         n,
     }
 
 
 def _print_table(per_skill, average, n_ep):
-    sep = "=" * 86
+    sep = "=" * 96
     print()
     print(sep)
     print(f" PADPP Table-2 style evaluation  (n={n_ep} episodes per skill)")
     print(sep)
     # Columns match PADPP paper notation: SR, avg.turn, r_gain, r_fair, r_deal
-    print(f"{'Skill':<28} {'SR':>8} {'avg.turn':>10} {'r_gain':>8} {'r_fair':>8} {'r_deal':>8}")
-    print("-" * 86)
+    # `avg.turn` is the utterance count (paper convention, 5-10 range).
+    # `steps` is the alternative agent-decision count for reference.
+    print(f"{'Skill':<28} {'SR':>8} {'avg.turn':>10} {'steps':>7} "
+          f"{'r_gain':>8} {'r_fair':>8} {'r_deal':>8}")
+    print("-" * 96)
     for name, r in per_skill.items():
-        print(f"{name:<28} {r['SR']:>8.3f} {r['avg_turn']:>10.2f} "
+        print(f"{name:<28} {r['SR']:>8.3f} {r['avg_turn']:>10.2f} {r['avg_steps']:>7.2f} "
               f"{r['r_gain']:>8.3f} {r['r_fair']:>8.3f} {r['r_deal']:>8.3f}")
-    print("-" * 86)
+    print("-" * 96)
     print(f"{'AVERAGE':<28} {average['SR']:>8.3f} {average['avg_turn']:>10.2f} "
+          f"{average['avg_steps']:>7.2f} "
           f"{average['r_gain']:>8.3f} {average['r_fair']:>8.3f} {average['r_deal']:>8.3f}")
     print(sep)
 
@@ -342,7 +357,7 @@ if __name__ == '__main__':
             per_skill_results[name] = _aggregate(raw)
 
     # ── Average across skills (replaces PADPP's "uniform" row) ───────────
-    keys = ['SR', 'avg_turn', 'r_gain', 'r_fair', 'r_deal']
+    keys = ['SR', 'avg_turn', 'avg_steps', 'r_gain', 'r_fair', 'r_deal']
     average = {k: sum(r[k] for r in per_skill_results.values()) / len(per_skill_results)
                for k in keys}
 
