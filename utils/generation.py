@@ -227,15 +227,20 @@ _PRICE_PATTERN = re.compile(r"\$?\d[\d,]*\.?\d*")
 
 
 def _seller_has_offered_price(state) -> bool:
-    """Return True if any prior USER turn (the seller) mentioned a numeric price.
-    Used to disable 'agree' when there is no seller price to accept yet,
-    which would otherwise let the agent hallucinate a deal at turn 0."""
+    """Return True only if the seller has made a real counter-offer DURING
+    negotiation. The game initialises dialogue_context with a fixed pair
+    [assistant: 'how much?', user: 'this is a good X and price is $N'] —
+    that opening listing is dataset boilerplate, not a real negotiated
+    offer. Treating it as one lets 'agree' at the very first agent turn
+    capitulate to the seller's listed price (sl_ratio ~ 0).
+
+    We skip the first two boilerplate turns and only count a user turn as
+    "a real offer" if it appears at index >= 2 (i.e. user response AFTER
+    the agent's first negotiating move)."""
     dialogue = state.get('dialogue_context', [])
-    for turn in dialogue:
+    for turn in dialogue[2:]:
         if turn.get('role') == 'user':
             content = turn.get('content', '') or ''
-            # Strip task_background-mentioned prices like buyer/seller listed price;
-            # we want an actual NEW number proposed in the conversation.
             if _PRICE_PATTERN.search(content):
                 return True
     return False
