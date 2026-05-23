@@ -132,13 +132,15 @@ def _episode(trainer, case, simulator, action_mapping, w, skill_name, max_horizo
 
 
 def _aggregate(results):
+    """Aggregate per-episode results into PADPP Table-2 columns.
+    Column names follow the paper: SR, avg.turn, r_gain, r_fair, r_deal."""
     n = max(len(results), 1)
     return {
         'SR':       sum(r[SUCCESS_RATE] for r in results) / n,
-        'SL':       sum(r[SL_RATIO] for r in results) / n,
-        'Fairness': sum(r[FAIRNESS] for r in results) / n,
-        'DealRate': sum(r[DEAL_RATE] for r in results) / n,
-        'AvgTurns': sum(r[AVG_TURN][0] for r in results) / n,
+        'avg_turn': sum(r[AVG_TURN][0] for r in results) / n,
+        'r_gain':   sum(r[SL_RATIO]    for r in results) / n,
+        'r_fair':   sum(r[FAIRNESS]    for r in results) / n,
+        'r_deal':   sum(r[DEAL_RATE]   for r in results) / n,
         'n':        n,
     }
 
@@ -149,14 +151,15 @@ def _print_table(per_skill, average, n_ep):
     print(sep)
     print(f" PADPP Table-2 style evaluation  (n={n_ep} episodes per skill)")
     print(sep)
-    print(f"{'Skill':<28} {'SR':>8} {'SL':>8} {'Fair':>8} {'DealRate':>10} {'AvgTurns':>10}")
+    # Columns match PADPP paper notation: SR, avg.turn, r_gain, r_fair, r_deal
+    print(f"{'Skill':<28} {'SR':>8} {'avg.turn':>10} {'r_gain':>8} {'r_fair':>8} {'r_deal':>8}")
     print("-" * 86)
     for name, r in per_skill.items():
-        print(f"{name:<28} {r['SR']:>8.3f} {r['SL']:>8.3f} {r['Fairness']:>8.3f} "
-              f"{r['DealRate']:>10.3f} {r['AvgTurns']:>10.2f}")
+        print(f"{name:<28} {r['SR']:>8.3f} {r['avg_turn']:>10.2f} "
+              f"{r['r_gain']:>8.3f} {r['r_fair']:>8.3f} {r['r_deal']:>8.3f}")
     print("-" * 86)
-    print(f"{'AVERAGE':<28} {average['SR']:>8.3f} {average['SL']:>8.3f} "
-          f"{average['Fairness']:>8.3f} {average['DealRate']:>10.3f} {average['AvgTurns']:>10.2f}")
+    print(f"{'AVERAGE':<28} {average['SR']:>8.3f} {average['avg_turn']:>10.2f} "
+          f"{average['r_gain']:>8.3f} {average['r_fair']:>8.3f} {average['r_deal']:>8.3f}")
     print(sep)
 
 
@@ -338,8 +341,8 @@ if __name__ == '__main__':
             per_skill_raw[name] = raw
             per_skill_results[name] = _aggregate(raw)
 
-    # ── Average across skills (PADPP "uniform" replacement) ───────────────
-    keys = ['SR', 'SL', 'Fairness', 'DealRate', 'AvgTurns']
+    # ── Average across skills (replaces PADPP's "uniform" row) ───────────
+    keys = ['SR', 'avg_turn', 'r_gain', 'r_fair', 'r_deal']
     average = {k: sum(r[k] for r in per_skill_results.values()) / len(per_skill_results)
                for k in keys}
 
