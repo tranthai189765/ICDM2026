@@ -18,7 +18,7 @@ from tenacity import (
     retry_if_exception_type
 )  # for exponential backoff
 
-from config.constants import LLM_MODEL, LLAMA3, CHATGPT, LLAMA3_MODEL, FPT
+from config.constants import LLM_MODEL, LLAMA3, CHATGPT, LLAMA3_MODEL, FPT, QWEN, QWEN_MODEL
 
 load_dotenv()
 
@@ -77,27 +77,68 @@ def call_fpt_model(messages, temperature=0.0, max_token=256, n_return_sequences=
     return results[0] if n_return_sequences == 1 else results
 
 # Lazy-loaded globals — not instantiated until first use so that runs using
-# DeepInfra/ChatGPT don't pay the cost of downloading LLaMA3 (~16 GB) or the
-# sentiment model (~500 MB).
-_llama_pipeline = None
-_terminators = None
+# DeepInfra/ChatGPT don't pay the cost of downloading large local models.
+_local_pipelines = {}      # model_id -> (pipeline, terminators)
 _sentiment_pipeline = None
 
 
-def _get_llama_pipeline():
-    global _llama_pipeline, _terminators
-    if _llama_pipeline is None:
-        _llama_pipeline = transformers.pipeline(
-            "text-generation",
-            model=LLAMA3_MODEL,
-            model_kwargs={"torch_dtype": torch.bfloat16},
-            device_map="auto",
+def _detect_terminators(tokenizer):
+    """Collect EOS / end-of-turn token ids for common Instruct chat templates
+    (Llama-3 uses <|eot_id|>, Qwen uses <|im_end|>, etc.)."""
+    ids = set()
+    if tokenizer.eos_token_id is not None:
+        ids.add(tokenizer.eos_token_id)
+    unk = tokenizer.unk_token_id
+    for tok in ("<|eot_id|>", "<|im_end|>", "<|endoftext|>"):
+        tid = tokenizer.convert_tokens_to_ids(tok)
+        if tid is not None and tid != unk:
+            ids.add(tid)
+    return list(ids)
+
+
+def _get_local_pipeline(model_id=None, load_mode=None):
+    """Load and cache a HF text-generation pipeline for any Instruct model
+    (Llama-3, Qwen2.5, Mistral, ...). End-of-turn tokens are auto-detected
+    from the tokenizer so the same loader works across families.
+
+    Args:
+      model_id: HF model id; defaults to LLAMA3_MODEL.
+      load_mode: 'bf16' (default) | '4bit'/nf4 | '8bit'.
+                 Overridable via env LLAMA_LOCAL_LOAD.
+    """
+    global _local_pipelines
+    model_id = model_id or LLAMA3_MODEL
+    load_mode = (load_mode or os.getenv("LLAMA_LOCAL_LOAD", "bf16")).lower()
+
+    if model_id in _local_pipelines:
+        return _local_pipelines[model_id]
+
+    model_kwargs = {"torch_dtype": torch.bfloat16}
+    if load_mode in ("4bit", "int4", "nf4"):
+        from transformers import BitsAndBytesConfig
+        model_kwargs["quantization_config"] = BitsAndBytesConfig(
+            load_in_4bit=True, bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_use_double_quant=True,
         )
-        _terminators = [
-            _llama_pipeline.tokenizer.eos_token_id,
-            _llama_pipeline.tokenizer.convert_tokens_to_ids("<|eot_id|>")
-        ]
-    return _llama_pipeline, _terminators
+    elif load_mode in ("8bit", "int8"):
+        from transformers import BitsAndBytesConfig
+        model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+
+    pipe = transformers.pipeline(
+        "text-generation",
+        model=model_id,
+        model_kwargs=model_kwargs,
+        device_map="auto",
+    )
+    terminators = _detect_terminators(pipe.tokenizer)
+    _local_pipelines[model_id] = (pipe, terminators)
+    return pipe, terminators
+
+
+def _get_llama_pipeline():
+    """Backward-compat shim: load the default Llama-3 pipeline."""
+    return _get_local_pipeline(LLAMA3_MODEL)
 
 
 def _get_sentiment_pipeline():
@@ -107,28 +148,32 @@ def _get_sentiment_pipeline():
     return _sentiment_pipeline
 
 
-def call_llama3_model(prompt, temperature=0.0, max_token=30, n_return_sequences=1):
-    """
-    function that calls the llama3 model
-    :param prompt: the input prompt
-    :param temperature: the prompting temperature
-    :param max_token: max gen tokens
-    :return:
-    """
-    llama_pipeline, terminators = _get_llama_pipeline()
-    response = llama_pipeline(
+def _call_local_lm(model_id, prompt, temperature=0.0, max_token=30, n_return_sequences=1):
+    """Shared local-LM call path. Works with any Instruct model via auto-detected
+    end-of-turn tokens (Llama-3, Qwen2.5, Mistral, ...)."""
+    pipe, terminators = _get_local_pipeline(model_id)
+    response = pipe(
         prompt,
         max_new_tokens=max_token,
         eos_token_id=terminators,
         do_sample=True,
-        temperature=temperature,
+        temperature=max(temperature, 0.01),  # temp=0 disallowed when do_sample=True
         top_p=0.9,
-        num_return_sequences=n_return_sequences
+        num_return_sequences=n_return_sequences,
     )
     if n_return_sequences > 1:
         return [x["generated_text"][-1]["content"] for x in response]
-    else:
-        return response[0]["generated_text"][-1]["content"]
+    return response[0]["generated_text"][-1]["content"]
+
+
+def call_llama3_model(prompt, temperature=0.0, max_token=30, n_return_sequences=1):
+    """Call the local Llama-3 pipeline."""
+    return _call_local_lm(LLAMA3_MODEL, prompt, temperature, max_token, n_return_sequences)
+
+
+def call_qwen_model(prompt, temperature=0.0, max_token=30, n_return_sequences=1):
+    """Call the local Qwen2.5 pipeline (defaults to QWEN_MODEL from constants)."""
+    return _call_local_lm(QWEN_MODEL, prompt, temperature, max_token, n_return_sequences)
 
 
 def reformat_demonstration(demonstration, is_agent_start=False):
@@ -183,6 +228,9 @@ def call_llm(prompt, n=1, temperature=0.0, max_token=10, model_type='chatgpt'):
         # FPT-hosted Llama-3.3-70B-Instruct
         elif model_type == FPT:
             responses.append(call_fpt_model(prompt, temperature, max_token))
+        # local Qwen2.5 (e.g. 14B-Instruct)
+        elif model_type == QWEN:
+            responses.append(call_qwen_model(prompt, temperature, max_token))
     return responses
 
 
@@ -275,6 +323,8 @@ def get_llm_based_assessment_for_recommendation(target_topic, simulated_conversa
         responses.extend(call_llama3_model(messages, temperature, max_tokens, n_return_sequences=n))
     elif model_type == FPT:
         responses.extend(call_fpt_model(messages, temperature, max_tokens, n_return_sequences=n))
+    elif model_type == QWEN:
+        responses.extend(call_qwen_model(messages, temperature, max_tokens, n_return_sequences=n))
 
     # convert the text-based assessment to scalar based assessment
     # processing the llm's outputs
@@ -352,6 +402,8 @@ def get_llm_based_assessment_for_negotiation(simulated_conversation,
             responses.append(response.choices[0]['message']['content'])
     elif model_type == FPT:
         responses.extend(call_fpt_model(messages, temperature, max_tokens, n_return_sequences=n))
+    elif model_type == QWEN:
+        responses.extend(call_qwen_model(messages, temperature, max_tokens, n_return_sequences=n))
     else:
         responses.extend(call_llama3_model(messages, temperature, max_tokens, n_return_sequences=n))
     # convert the text-based assessment to scalar based assessment
@@ -410,6 +462,8 @@ def get_llm_based_assessment_for_emotional_support(state,
         responses.extend(call_llama3_model(messages, temperature, max_tokens, n_return_sequences=n))
     elif model_type == FPT:
         responses.extend(call_fpt_model(messages, temperature, max_tokens, n_return_sequences=n))
+    elif model_type == QWEN:
+        responses.extend(call_qwen_model(messages, temperature, max_tokens, n_return_sequences=n))
 
     # convert the text-based assessment to scalar based assessment
     # processing the llm's outputs

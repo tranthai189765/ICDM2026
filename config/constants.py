@@ -247,6 +247,13 @@ LLAMA3_MODEL = "meta-llama/Meta-Llama-3-8B-Instruct"
 FPT = "fpt"
 FPT_GENERATION_CONFIG_PATH = 'config/generation/FPT.yaml'
 
+# Local Qwen2.5-14B-Instruct (Alibaba). Sweet spot ~14B for A100 40GB in BF16
+# without needing quantization. Uses the same response-generation prompts as
+# Llama-3 (they're Instruct templates handled by the tokenizer's chat template).
+QWEN = "qwen"
+QWEN_GENERATION_CONFIG_PATH = 'config/generation/QWEN.yaml'
+QWEN_MODEL = "Qwen/Qwen2.5-14B-Instruct"
+
 # prompts for llm generation
 CHATGPT = 'chatgpt'
 CHATGPT_GENERATION_CONFIG_PATH = 'config/generation/CHATGPT.yaml'
@@ -323,6 +330,12 @@ LLAMA3_PROMPT_FOR_EMOTIONAL_SUPPORT = [
 FPT_PROMPT_FOR_RECOMMENDATION = LLAMA3_PROMPT_FOR_RECOMMENDATION
 FPT_PROMPT_FOR_NEGOTIATION = LLAMA3_PROMPT_FOR_NEGOTIATION
 FPT_PROMPT_FOR_EMOTIONAL_SUPPORT = LLAMA3_PROMPT_FOR_EMOTIONAL_SUPPORT
+
+# Qwen2.5 Instruct uses standard system/user prompts; reuse the Llama-3 prompts
+# (the chat template handles model-specific formatting at tokenization time).
+QWEN_PROMPT_FOR_RECOMMENDATION = LLAMA3_PROMPT_FOR_RECOMMENDATION
+QWEN_PROMPT_FOR_NEGOTIATION = LLAMA3_PROMPT_FOR_NEGOTIATION
+QWEN_PROMPT_FOR_EMOTIONAL_SUPPORT = LLAMA3_PROMPT_FOR_EMOTIONAL_SUPPORT
 
 # the prompts for vicuna model
 # including prompts for recommendation, negotiation and emotional support

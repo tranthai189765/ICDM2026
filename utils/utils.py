@@ -201,6 +201,7 @@ from text_gen.chatgpt_generation import ChatGPTGeneration, ChatGPTConfigForGener
 from text_gen.vicuna_generation import VicunaGeneration, VicunaGenerationConfig
 from text_gen.llama3_generation import Llama3Generation, Llama3ConfigForGeneration
 from text_gen.fpt_generation import FPTGeneration, FPTConfigForGeneration
+from text_gen.qwen_generation import QwenGeneration, QwenConfigForGeneration
 
 # loggers
 from logger.file_logger import FileLogger
@@ -1014,6 +1015,12 @@ def get_text_generation_model_by_name(scenario, names):
                 FPT_PROMPT_FOR_RECOMMENDATION,
                 FPTConfigForGeneration,
                 FPTGeneration
+            ],
+            QWEN: [
+                QWEN_GENERATION_CONFIG_PATH,
+                QWEN_PROMPT_FOR_RECOMMENDATION,
+                QwenConfigForGeneration,
+                QwenGeneration
             ]
         }
         # a list contains generation packages
@@ -1062,6 +1069,12 @@ def get_text_generation_model_by_name(scenario, names):
                 FPT_PROMPT_FOR_NEGOTIATION,
                 FPTConfigForGeneration,
                 FPTGeneration
+            ],
+            QWEN: [
+                QWEN_GENERATION_CONFIG_PATH,
+                QWEN_PROMPT_FOR_NEGOTIATION,
+                QwenConfigForGeneration,
+                QwenGeneration
             ]
         }
         # a list contains generation packages
@@ -1110,6 +1123,12 @@ def get_text_generation_model_by_name(scenario, names):
                 FPT_PROMPT_FOR_EMOTIONAL_SUPPORT,
                 FPTConfigForGeneration,
                 FPTGeneration
+            ],
+            QWEN: [
+                QWEN_GENERATION_CONFIG_PATH,
+                QWEN_PROMPT_FOR_EMOTIONAL_SUPPORT,
+                QwenConfigForGeneration,
+                QwenGeneration
             ]
         }
         # a list contains generation packages
