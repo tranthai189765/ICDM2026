@@ -12,6 +12,10 @@ data
 # DMORL runtime files (persisted between runs but not versioned)
 dmorl_hints_*.json
 dmorl_skills_*.json
+# ...except hand-crafted skill libraries committed for reproducibility
+!dmorl_skills_neg.json
+!dmorl_skills_rec.json
+!dmorl_skills_es.json
 
 # Python
 __pycache__/
