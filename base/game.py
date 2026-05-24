@@ -563,11 +563,15 @@ class NegotiationGame(Game):
                 pass
 
         # vector-valued reward function
-        # sl_ratio / fairness are attenuated 10x except at SUCCESSFUL terminal
+        # sl_ratio / fairness are attenuated except at SUCCESSFUL terminal
         # (done == 1). Both intermediate (done == 0) and timeout-failure
         # (done == -1) get the small signal, so the agent cannot reward-hack
         # by anchoring at a buyer-favorable price without closing a deal.
-        shaping = 1.0 if done == 1 else 0.1
+        # 0.3 chosen as sweet spot: strong enough TD signal for the anchor
+        # strategy to dominate capitulation (0.1 made the gap too small and
+        # skills collapsed to 1-turn deals), but small enough that "refuse
+        # forever" doesn't beat actually closing a deal.
+        shaping = 1.0 if done == 1 else 0.3
 
         reward = []
 
