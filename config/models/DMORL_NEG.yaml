@@ -36,5 +36,5 @@ use_hints: true
 hints_file: "dmorl_hints_neg.json"
 skills_file: "dmorl_skills_neg.json"
 run_curriculum: true
-force_rediscover_skills: true
+force_rediscover_skills: false   # Use hand-crafted dmorl_skills_neg.json for paper comparison
 saved_dir: "checkpoints/dmorl_neg"
