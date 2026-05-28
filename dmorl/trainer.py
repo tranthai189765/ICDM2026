@@ -451,12 +451,20 @@ class DMORLTrainer(PADPPTrainer):
                 # GPI over skill library
                 gpi_logits = self.model.gpi_action_values(feature, skill_weights)  # [1, n_actions]
 
+                # Mask redundant actions before selection
+                from padpp.trainer import _build_action_mask
+                action_mask = _build_action_mask(
+                    action_mapping, gpi_logits.size(-1), gpi_logits.device)
+                gpi_logits = gpi_logits.masked_fill(~action_mask, float('-inf'))
+
                 if is_test:
                     action_idx = gpi_logits.argmax().item()
                 else:
                     eps = getattr(self.model_config, 'epsilon', 0.1)
                     if np.random.random() < eps:
-                        action_idx = np.random.randint(0, gpi_logits.size(-1))
+                        # sample uniformly from VALID actions only
+                        valid_idx = action_mask.nonzero(as_tuple=False).squeeze(-1).tolist()
+                        action_idx = int(np.random.choice(valid_idx))
                     else:
                         action_idx = gpi_logits.argmax().item()
 

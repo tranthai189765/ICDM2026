@@ -311,6 +311,18 @@ def construct_prompt_for_chat_gpt_response_generation_negotiation(state, prompt)
                     ". Please clearly REJECT the seller's offer without proposing a new price. "
                     "State that the price is unacceptable."
                 )
+            elif strategy == "walk_away":
+                goal_description = (
+                    ". Please clearly announce that you are WALKING AWAY from this negotiation. "
+                    "Say you will look for other sellers / alternatives. "
+                    "Do NOT propose any new price. Be polite but firm."
+                )
+            elif strategy == "final_offer":
+                goal_description = (
+                    f". Please state that ${proposed_priced} is your absolute FINAL offer. "
+                    "Make clear this is non-negotiable: the seller must accept this price "
+                    "or you will walk away. Be firm but professional."
+                )
             logger.debug(f"goal_description: {goal_description}")
         else:
             goal_description = pred_goal
