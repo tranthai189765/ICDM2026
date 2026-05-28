@@ -114,10 +114,15 @@ def _episode(trainer, case, simulator, action_mapping, w, skill_name, max_horizo
     # PADPP convention: report TERMINAL-step objective rewards (the actual
     # negotiated outcome), not the average over all turns. Intermediate
     # turns have shaped or zero values and would dilute the headline numbers.
+    # base/game.py applies shaping = 0.3 to sl_ratio/fairness when done != 1
+    # (timeout failure). PADPP paper reports RAW values, so we undo the
+    # shaping for reporting to keep r_gain / r_fair on the same scale.
     terminal = arr[-1]
     n_obj = arr.shape[1]
-    sl = float(terminal[0]) if n_obj >= 1 else 0.0
-    fair = float(terminal[1]) if n_obj >= 2 else 0.0
+    is_deal = (done == 1)
+    inv_shape = 1.0 if is_deal else (1.0 / 0.3)
+    sl = float(terminal[0]) * inv_shape if n_obj >= 1 else 0.0
+    fair = float(terminal[1]) * inv_shape if n_obj >= 2 else 0.0
     deal_rate = float(terminal[2]) if n_obj >= 3 else 0.0
     # Two ways to count "turns" — paper convention ambiguous so we report both:
     #   - agent_steps: number of agent decisions (= conv_turn, max ~4 with max_horizon=10)

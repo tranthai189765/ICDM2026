@@ -295,8 +295,13 @@ def _episode(game, generation_method, simulator, case, action_mapping,
     arr = np.array(epi_rewards)
     terminal = arr[-1]
     n_obj = arr.shape[1]
-    sl = float(terminal[0]) if n_obj >= 1 else 0.0
-    fair = float(terminal[1]) if n_obj >= 2 else 0.0
+    # base/game.py applies shaping = 0.3 to sl_ratio/fairness when done != 1
+    # (intermediate / timeout), shaping = 1.0 when done == 1 (deal success).
+    # PADPP paper reports RAW values, so we undo the shaping for reporting.
+    is_deal = (done == 1)
+    inv_shape = 1.0 if is_deal else (1.0 / 0.3)
+    sl = float(terminal[0]) * inv_shape if n_obj >= 1 else 0.0
+    fair = float(terminal[1]) * inv_shape if n_obj >= 2 else 0.0
     deal_rate = float(terminal[2]) if n_obj >= 3 else 0.0
     utterance_count = len(state['dialogue_context'])
 
