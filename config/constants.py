@@ -383,6 +383,9 @@ NEGOTIATION_GOAL2DESCRIPTION = {'greet': 'Please say hello or chat randomly.',
                                 'deny': 'Please give a negative response to a confirm.',
                                 'agree': 'Please agree with the proposed price.',
                                 'disagree': 'Please disagree with the proposed price.',
+                                # Option B additions (paper-specific buyer tactics)
+                                'walk_away': 'Please announce that you are walking away from the negotiation.',
+                                'final_offer': 'Please make a take-it-or-leave-it final price offer.',
 
                                 # for standard prompting. There is no instruction for dialogue strategy
                                 'Standard': ""}
