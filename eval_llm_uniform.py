@@ -113,23 +113,26 @@ So bins 0, 1, 2 yield the SAME (r_gain + r_fair) sum when the deal closes.
 Bins 3 and 4 are strictly worse. The right choice between bins 0/1/2 depends
 on what the SELLER will accept, NOT on which objective matters more.
 
-### HARD DECISION RULES (apply in order)
+### HARD DECISION RULES (apply in order — AGGRESSIVE r_gain mode)
 
-R1. NEVER agree at a price strictly ABOVE the midpoint.
-    - If seller's latest offer > midpoint by >5%, you MUST counter (not agree).
-    - Agreeing above midpoint gives r_gain < 0.5 + r_fair < 0.5, weighted < 0.5.
+R1. NEVER agree at a price strictly ABOVE bin 1 (= buyer_target + 20% of range).
+    - If seller's latest offer > bin 1 price, you MUST counter (not agree).
+    - This is stricter than midpoint — pushes for strong buyer-side outcomes.
 
-R2. If you have 3+ turns remaining and seller hasn't moved below midpoint,
-    use `final_offer, 2` (commit at midpoint) to force seller's hand.
+R2. Anchor bin 0 (buyer_target price) for the FIRST 2 turns.
+    Use `counter, 0` or `final_offer, 0` to make seller move down.
 
-R3. If 1 turn remains and seller's offer is between midpoint and midpoint+5%,
-    AGREE rather than time out (avoids r_deal=0 catastrophe).
+R3. If 3+ turns remain and seller hasn't moved below bin 2 (~midpoint),
+    use `final_offer, 1` to commit at bin 1 with credible walk-threat.
 
-R4. If seller's offer is at or below midpoint, AGREE immediately
-    (this is the Pareto-optimal outcome).
+R4. If seller's offer is at or below bin 1 price, AGREE immediately
+    (max r_gain outcome — top of Pareto front).
 
-R5. NEVER use `walk_away` unless seller has refused TWO consecutive
-    midpoint offers (i.e., they're completely inflexible).
+R5. If seller's offer is between bin 1 and bin 2 AND only 1 turn remains,
+    AGREE (avoids r_deal=0 catastrophe). Else counter at bin 1.
+
+R6. If seller refuses your final_offer at bin 1 twice, use `walk_away`.
+    Timeout at bin 1 anchor gives r_gain ~ 0.8 (better than capitulating).
 
 ### Seller simulator pattern (learned from prior runs)
 - Seller REFUSES bin 0 anchors -> always leads to timeout. Avoid as opener.
