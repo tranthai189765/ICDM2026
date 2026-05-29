@@ -149,14 +149,24 @@ Anything below weighted 0.30/turn means you are off the Pareto front.
 # Chain-of-thought scaffold (toggle via --cot)
 COT_INSTRUCTIONS = """## Reasoning Protocol
 
-Before answering, silently work through these 3 questions:
-  Q1. What is the seller's most recent stated price (if any)? Is it above,
-      below, or equal to midpoint?
-  Q2. Which of the HARD DECISION RULES (R1-R5) applies right now?
-  Q3. Among the rule-conformant actions, which one yields the highest
-      expected weighted reward this turn?
+Reason step-by-step, then output your choice in the EXACT format below.
 
-Then output ONLY the action index as a single integer on a new line.
+Reasoning (briefly):
+  Q1. Seller's most recent stated price (number only). Is it above / below /
+      equal to midpoint?
+  Q2. Which of the HARD DECISION RULES R1-R5 applies right now?
+  Q3. Among rule-conformant actions, which yields the HIGHEST expected
+      weighted reward this turn?
+
+After reasoning, output the FINAL answer on its own line, using the EXACT
+format (no extra prose, no quotes, no parentheses):
+
+    Action index: <N>
+
+where <N> is the integer ID of the chosen action FROM THE NUMBERED LIST
+ABOVE — NOT a price, NOT a bin number, NOT a weighted score. The ID must
+be one of the integers shown next to actions in the 'Available Actions'
+section (e.g. 0, 5, 10, 15, ...).
 """
 
 
@@ -309,6 +319,7 @@ def llm_select_action_uniform(state, weight, action_mapping, objective_names,
             _format_feedback_history(feedback_log, weight),
         ]
 
+    valid_ids_text = ", ".join(str(i) for i in valid_ids)
     sections += [
         "",
         "## Available Actions",
@@ -318,12 +329,17 @@ def llm_select_action_uniform(state, weight, action_mapping, objective_names,
         f"- Decision turn #{step_in_episode + 1}.",
         f"- ~{remaining_turns} more turns before timeout.",
         "- Pick the action that BEST advances the weighted uniform objective.",
+        f"- The action ID you output MUST be one of: [{valid_ids_text}]",
     ]
 
     if use_cot:
         sections += ["", COT_INSTRUCTIONS]
     else:
-        sections += ["", "Respond with ONLY the integer action index."]
+        sections += [
+            "",
+            "Respond with ONLY a single integer — the chosen action ID from "
+            "the list above (NOT a price, NOT a bin number).",
+        ]
 
     user_content = "\n".join(sections)
 
@@ -340,22 +356,26 @@ def llm_select_action_uniform(state, weight, action_mapping, objective_names,
     ]
 
     try:
-        # CoT mode emits reasoning prose before the index; allocate more tokens
-        # and extract the LAST integer in the response (the final answer).
         max_tok = 400 if use_cot else 15
         raw = call_policy_llm(messages, temperature=0.2, max_tokens=max_tok)
-        if use_cot:
-            matches = re.findall(r"\d+", raw)
-            if not matches:
-                raise ValueError(f"no integer in '{raw[:200]}'")
-            idx = int(matches[-1])
-        else:
-            m = re.search(r"\d+", raw)
-            if m is None:
-                raise ValueError(f"no integer in '{raw}'")
-            idx = int(m.group(0))
-        if idx not in id_to_action:
-            raise ValueError(f"idx {idx} not in valid set (top: {valid_ids[:8]}...)")
+        idx = None
+        # Priority 1: explicit "Action index: N" marker (CoT) — most reliable.
+        marker = re.search(r"[Aa]ction[ _]?index\s*[:=]\s*(\d+)", raw)
+        if marker is not None:
+            candidate = int(marker.group(1))
+            if candidate in id_to_action:
+                idx = candidate
+        # Priority 2: scan ALL integers in the response from the end, picking
+        # the last one that is a valid action_id. This skips prices ($1800),
+        # bin numbers ("bin 2"), weighted return scores, etc.
+        if idx is None:
+            for tok in reversed(re.findall(r"\d+", raw)):
+                cand = int(tok)
+                if cand in id_to_action:
+                    idx = cand
+                    break
+        if idx is None:
+            raise ValueError(f"no valid action index in response (raw: {raw[:200]!r})")
         return id_to_action[idx], idx
     except Exception as e:
         logger.warning(f"[LLM uniform] selection failed ({e}); using random valid action.")
