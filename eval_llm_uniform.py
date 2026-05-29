@@ -240,15 +240,100 @@ R5. AVOID prolonging the conversation past natural resolution — the
     avg_turn penalty adds up.
 """
 
-# PADPP paper Table 2 'uniform' row reference for each scenario.
+# PADPP paper Table 2 / Table 3 reference numbers, indexed by
+# (scenario, weight_setting). Weight conventions match the paper exactly:
+#   negotiation:    d=3 (sl_ratio, fairness, deal_rate); uniform = (1/3)*1_3
+#   recommendation: d=2 (user_reward, item_freq);        uniform = (1/2)*1_2
+# Per-objective rows use one-hot weights (e.g. w_gain = (1, 0, 0)).
+# Missing fields are '-' in the paper (not measured for that focal objective).
 PADPP_REFS = {
-    'negotiation':       {'SR': 0.427, 'avg_turn': 9.638,
-                          'r_gain': 0.622, 'r_fair': 0.287, 'r_deal': 0.142},
-    'recommendation':    {'SR': 0.0, 'avg_turn': 0.0,  # TODO: fill from paper
-                          'r_gain': 0.0, 'r_fair': 0.0, 'r_deal': 0.0},
-    'emotional_support': {'SR': 0.0, 'avg_turn': 0.0,  # TODO: fill from paper
-                          'r_gain': 0.0, 'r_fair': 0.0, 'r_deal': 0.0},
+    ('negotiation', 'uniform'): {
+        'SR': 0.427, 'avg_turn': 9.638,
+        'r_gain': 0.622, 'r_fair': 0.287, 'r_deal': 0.142,
+    },
+    ('negotiation', 'gain'): {
+        'SR': 0.085, 'avg_turn': 9.898,
+        'r_gain': 0.944, 'r_fair': None, 'r_deal': None,
+    },
+    ('negotiation', 'fair'): {
+        'SR': 0.126, 'avg_turn': 9.914,
+        'r_gain': None, 'r_fair': 0.368, 'r_deal': None,
+    },
+    ('negotiation', 'deal'): {
+        'SR': 0.489, 'avg_turn': 9.531,
+        'r_gain': None, 'r_fair': None, 'r_deal': 0.165,
+    },
+    ('recommendation', 'uniform'): {
+        'SR': 0.505, 'avg_turn': 10.000,
+        'r_user': 2.232, 'r_item': 2.206,
+    },
+    ('recommendation', 'user'): {
+        'SR': 0.280, 'avg_turn': 10.000,
+        'r_user': 2.532, 'r_item': None,
+    },
+    ('recommendation', 'item'): {
+        'SR': 0.582, 'avg_turn': 10.000,
+        'r_user': None, 'r_item': 2.895,
+    },
 }
+
+
+# Map a --weight_setting CLI value to the matching weight vector.
+# Weight vector length follows the SCENARIO's natural objective count;
+# avg_turn (negotiation 4th obj) is zeroed out to match the paper.
+def build_weight_vector(scenario, setting, objective_names):
+    """Return the weight vector for a given paper-aligned setting.
+
+    setting in {'uniform', 'gain', 'fair', 'deal', 'user', 'item'} or '4d'
+    for the 4D-uniform extension (negotiation only) that weights avg_turn.
+    """
+    n = len(objective_names)
+    w = [0.0] * n
+
+    def _idx(name_options):
+        for o in name_options:
+            if o in objective_names:
+                return objective_names.index(o)
+        return None
+
+    if scenario == 'negotiation':
+        # 3 paper-aligned objectives; zero out avg_turn if present
+        gain_i = _idx(['sl_ratio'])
+        fair_i = _idx(['fairness'])
+        deal_i = _idx(['deal_rate', 'sr'])
+        active = [i for i in (gain_i, fair_i, deal_i) if i is not None]
+        if setting == 'uniform':
+            for i in active:
+                w[i] = 1.0 / len(active)
+        elif setting == 'gain':
+            w[gain_i] = 1.0
+        elif setting == 'fair':
+            w[fair_i] = 1.0
+        elif setting == 'deal':
+            w[deal_i] = 1.0
+        elif setting == '4d':
+            w = [1.0 / n] * n  # full 4D uniform including avg_turn
+        else:
+            raise ValueError(f"Unknown setting for negotiation: {setting}")
+    elif scenario == 'recommendation':
+        user_i = _idx(['user_reward'])
+        item_i = _idx(['item_freq'])
+        if setting == 'uniform':
+            w[user_i] = 0.5
+            w[item_i] = 0.5
+        elif setting == 'user':
+            w[user_i] = 1.0
+        elif setting == 'item':
+            w[item_i] = 1.0
+        else:
+            raise ValueError(f"Unknown setting for recommendation: {setting}")
+    else:
+        # Generic: uniform across all listed objectives
+        if setting == 'uniform':
+            w = [1.0 / n] * n
+        else:
+            raise ValueError(f"Setting '{setting}' not defined for {scenario}")
+    return w
 
 
 def build_pareto_hint(scenario_name):
@@ -610,34 +695,62 @@ def _aggregate(results):
     }
 
 
-def _print_table(average, n_ep, policy_model, weight, objective_names, padpp_ref=None):
+def _print_table(average, n_ep, policy_model, weight, objective_names,
+                  padpp_ref=None, setting='uniform'):
+    """Print results table aligned to paper Table 2/3 columns.
+
+    Columns shown depend on scenario + setting:
+      negotiation uniform:   SR, avg.turn, r_gain, r_fair, r_deal
+      negotiation gain:      SR, avg.turn, r_gain (only focal column)
+      negotiation fair/deal: SR, avg.turn, r_fair / r_deal (focal only)
+      recommendation:        SR, avg.turn, r_user, r_item (or focal)
+    """
     sep = "=" * 100
     print()
     print(sep)
-    print(f" LLM-as-policy UNIFORM baseline  (policy: {policy_model})  (n={n_ep} episodes)")
+    print(f" LLM-as-policy baseline  (policy: {policy_model})  "
+          f"(setting={setting}, n={n_ep})")
     print(sep)
     weight_str = " ".join(f"{n}={w:.2f}" for n, w in zip(objective_names, weight))
     print(f" Weight vector: [{weight_str}]")
     print(f" Cumulative weighted return per episode: {average['weighted']:+.4f}")
     print(sep)
-    print(f"{'Method':<28} {'SR':>8} {'avg.turn':>10} {'steps':>7} "
-          f"{'r_gain':>8} {'r_fair':>8} {'r_deal':>8}")
-    print("-" * 100)
+
+    # Determine which reward columns to display.
+    if padpp_ref is not None:
+        reward_cols = [k for k in padpp_ref if k.startswith('r_')]
+    else:
+        reward_cols = [k for k in ('r_gain', 'r_fair', 'r_deal', 'r_user', 'r_item')
+                       if k in average]
+
+    header = f"{'Method':<28} {'SR':>8} {'avg.turn':>10} {'steps':>7}"
+    for c in reward_cols:
+        header += f" {c:>9}"
+    print(header)
+    print("-" * len(header))
+
+    def _row(label, src, show_steps=True):
+        line = f"{label:<28} {src.get('SR', 0):>8.3f} {src.get('avg_turn', 0):>10.2f}"
+        line += f" {src.get('avg_steps', 0):>7.2f}" if show_steps else f" {'-':>7}"
+        for c in reward_cols:
+            v = src.get(c)
+            line += f" {v:>9.3f}" if v is not None else f" {'-':>9}"
+        return line
+
     if padpp_ref:
-        print(f"{'PADPP (paper Table 2)':<28} "
-              f"{padpp_ref['SR']:>8.3f} {padpp_ref['avg_turn']:>10.3f} {'-':>7} "
-              f"{padpp_ref['r_gain']:>8.3f} {padpp_ref['r_fair']:>8.3f} {padpp_ref['r_deal']:>8.3f}")
-    print(f"{'LLM uniform (this run)':<28} {average['SR']:>8.3f} {average['avg_turn']:>10.2f} "
-          f"{average['avg_steps']:>7.2f} "
-          f"{average['r_gain']:>8.3f} {average['r_fair']:>8.3f} {average['r_deal']:>8.3f}")
+        print(_row('PADPP (paper)', padpp_ref, show_steps=False))
+    print(_row('LLM baseline (this run)', average))
+
     if padpp_ref:
-        print("-" * 100)
-        print(f"{'Δ vs PADPP':<28} "
-              f"{average['SR'] - padpp_ref['SR']:>+8.3f} "
-              f"{average['avg_turn'] - padpp_ref['avg_turn']:>+10.3f} {'':>7} "
-              f"{average['r_gain'] - padpp_ref['r_gain']:>+8.3f} "
-              f"{average['r_fair'] - padpp_ref['r_fair']:>+8.3f} "
-              f"{average['r_deal'] - padpp_ref['r_deal']:>+8.3f}")
+        delta = {'SR': average['SR'] - padpp_ref['SR'],
+                 'avg_turn': average['avg_turn'] - padpp_ref['avg_turn']}
+        for c in reward_cols:
+            delta[c] = average.get(c, 0) - padpp_ref[c]
+        print("-" * len(header))
+        line = f"{'Δ vs PADPP':<28} {delta['SR']:>+8.3f} {delta['avg_turn']:>+10.3f} {'':>7}"
+        for c in reward_cols:
+            line += f" {delta[c]:>+9.3f}"
+        print(line)
     print(sep)
 
 
@@ -651,7 +764,14 @@ def parse_eval_args():
     extra.add_argument('--no_pareto_hint', action='store_true',
                        help='Disable the Pareto-strategy briefing.')
     extra.add_argument('--uniform_3d', action='store_true',
-                       help='Use 3D uniform weight [1/3,1/3,1/3,0] (match PADPP paper).')
+                       help='[DEPRECATED, use --weight_setting] Use 3D uniform weight matching PADPP paper.')
+    extra.add_argument('--weight_setting', type=str, default='uniform',
+                       choices=['uniform', 'gain', 'fair', 'deal',
+                                'user', 'item', '4d'],
+                       help='Paper-aligned weight scenario. '
+                            'negotiation: uniform/gain/fair/deal (3D, w_avg_turn=0). '
+                            'recommendation: uniform/user/item (2D). '
+                            "'4d' = full 4D uniform (negotiation extension).")
     extra.add_argument('--cot', action='store_true',
                        help='Enable chain-of-thought reasoning before action selection.')
     extra_args, _ = extra.parse_known_args(sys.argv[1:])
@@ -743,15 +863,12 @@ if __name__ == '__main__':
     objective_descriptions = {n: OBJECTIVE_DESCRIPTIONS.get(n, '') for n in objective_names}
 
     n_obj = len(objective_names)
-    if eval_overrides['uniform_3d'] and 'avg_turn' in objective_names:
-        # Match PADPP paper exactly: ignore avg_turn (weight = 0)
-        weight = []
-        n_active = sum(1 for o in objective_names if o != 'avg_turn')
-        for o in objective_names:
-            weight.append(0.0 if o == 'avg_turn' else 1.0 / n_active)
-    else:
-        # 4D uniform
-        weight = [1.0 / n_obj] * n_obj
+    # New paper-aligned dispatch via --weight_setting; keep --uniform_3d alias
+    setting = eval_overrides['weight_setting']
+    if eval_overrides['uniform_3d'] and setting == 'uniform':
+        # backward-compat: --uniform_3d implies setting='uniform' (already default)
+        pass
+    weight = build_weight_vector(args['scenario'], setting, objective_names)
 
     include_pareto_hint = not eval_overrides['no_pareto_hint']
     include_feedback = not eval_overrides['no_feedback']
@@ -787,11 +904,15 @@ if __name__ == '__main__':
         raise RuntimeError("All episodes failed.")
     average = _aggregate(raw_results)
 
-    # PADPP paper Table 2 'uniform' row reference, dispatched by scenario.
-    ref = PADPP_REFS.get(args['scenario'])
-    padpp_ref = ref if (ref and any(v > 0 for v in ref.values())) else None
+    # PADPP paper reference numbers for THIS (scenario, weight_setting) pair.
+    # Skip if the setting has no published row.
+    padpp_ref = PADPP_REFS.get((args['scenario'], setting))
+    if padpp_ref is not None:
+        # Drop None entries (focal-objective rows) for clean display
+        padpp_ref = {k: v for k, v in padpp_ref.items() if v is not None}
 
-    _print_table(average, n_test, policy_model, weight, objective_names, padpp_ref)
+    _print_table(average, n_test, policy_model, weight, objective_names,
+                  padpp_ref, setting=setting)
 
     out_dir = eval_overrides['output_dir']
     os.makedirs(out_dir, exist_ok=True)
