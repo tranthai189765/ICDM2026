@@ -102,30 +102,61 @@ ACTION_DESCRIPTIONS = {
 }
 
 # Pareto strategy briefing for negotiation (uniform-weight specific)
-PARETO_HINT_NEG = """## Pareto Strategy Guide (you must internalise this)
+PARETO_HINT_NEG = """## Pareto Strategy Guide (you MUST internalise these RULES)
 
-With UNIFORM weights, every objective matters equally. The buyer-side Pareto
-front has a powerful structural property: for any system_price <= midpoint,
+### Core math
+With uniform weights, the buyer-side Pareto front has the property:
 
-    sl_ratio + fairness ~ 1.0  (they trade off 1:1)
+    r_gain + r_fair ~ 1.0  for any system_price <= midpoint
 
-So the action bin you pick is NOT a real trade-off between r_gain and r_fair
-when you're on the buyer side. Any bin 0, 1, or 2 yields the SAME weighted
-sum w*r_gain + w*r_fair when the deal closes. Bins 3 and 4 are strictly
-WORSE (you'd be on the seller side of midpoint).
+So bins 0, 1, 2 yield the SAME (r_gain + r_fair) sum when the deal closes.
+Bins 3 and 4 are strictly worse. The right choice between bins 0/1/2 depends
+on what the SELLER will accept, NOT on which objective matters more.
 
-Given that, the dominant strategy under uniform weights is:
+### HARD DECISION RULES (apply in order)
 
-  1. Anchor at bin 2 (~midpoint price) — equal r_gain and r_fair, fair-looking
-     to the seller so it actually closes.
-  2. CLOSE THE DEAL FAST (1-3 turns) — every extra turn costs r_turn = -0.1
-     AND erodes deal probability.
-  3. Use `final_offer, 2` if seller resists after one round.
-  4. Use `agree` only if the seller offers a price close to midpoint.
-  5. Avoid bin 0 (will not close) and bin 4 (gives up too much value).
+R1. NEVER agree at a price strictly ABOVE the midpoint.
+    - If seller's latest offer > midpoint by >5%, you MUST counter (not agree).
+    - Agreeing above midpoint gives r_gain < 0.5 + r_fair < 0.5, weighted < 0.5.
 
-Pareto-optimal target outcome: deal closes around the midpoint in 2-3 turns
-=> r_gain ~ 0.6, r_fair ~ 0.4, r_deal = 1.0, r_turn ~ -0.2, weighted ~ 0.45.
+R2. If you have 3+ turns remaining and seller hasn't moved below midpoint,
+    use `final_offer, 2` (commit at midpoint) to force seller's hand.
+
+R3. If 1 turn remains and seller's offer is between midpoint and midpoint+5%,
+    AGREE rather than time out (avoids r_deal=0 catastrophe).
+
+R4. If seller's offer is at or below midpoint, AGREE immediately
+    (this is the Pareto-optimal outcome).
+
+R5. NEVER use `walk_away` unless seller has refused TWO consecutive
+    midpoint offers (i.e., they're completely inflexible).
+
+### Seller simulator pattern (learned from prior runs)
+- Seller REFUSES bin 0 anchors -> always leads to timeout. Avoid as opener.
+- Seller usually counters at 75-85% of listed price after one round.
+- Seller often accepts bin 1 or bin 2 after 2-3 polite counters.
+- `final_offer, 2` + persistence has high acceptance rate.
+- `agree, 0` is correct ONLY when seller has explicitly offered <= midpoint.
+
+### Target Pareto-optimal outcome
+Close the deal at ~midpoint in 2-3 turns:
+  -> r_gain ~ 0.6, r_fair ~ 0.4, r_deal = 1.0, r_turn ~ -0.2
+  -> WEIGHTED RETURN ~ 0.45 per turn  (this is your maximisation target)
+
+Anything below weighted 0.30/turn means you are off the Pareto front.
+"""
+
+# Chain-of-thought scaffold (toggle via --cot)
+COT_INSTRUCTIONS = """## Reasoning Protocol
+
+Before answering, silently work through these 3 questions:
+  Q1. What is the seller's most recent stated price (if any)? Is it above,
+      below, or equal to midpoint?
+  Q2. Which of the HARD DECISION RULES (R1-R5) applies right now?
+  Q3. Among the rule-conformant actions, which one yields the highest
+      expected weighted reward this turn?
+
+Then output ONLY the action index as a single integer on a new line.
 """
 
 
@@ -227,7 +258,8 @@ def llm_select_action_uniform(state, weight, action_mapping, objective_names,
                                 objective_descriptions, max_horizon,
                                 step_in_episode, feedback_log,
                                 include_pareto_hint=True,
-                                include_feedback=True):
+                                include_feedback=True,
+                                use_cot=False):
     actions = _build_valid_actions(action_mapping, state)
     action_text = _format_action_list(actions)
     valid_ids = [a[0] for a in actions]
@@ -286,9 +318,12 @@ def llm_select_action_uniform(state, weight, action_mapping, objective_names,
         f"- Decision turn #{step_in_episode + 1}.",
         f"- ~{remaining_turns} more turns before timeout.",
         "- Pick the action that BEST advances the weighted uniform objective.",
-        "",
-        "Respond with ONLY the integer action index.",
     ]
+
+    if use_cot:
+        sections += ["", COT_INSTRUCTIONS]
+    else:
+        sections += ["", "Respond with ONLY the integer action index."]
 
     user_content = "\n".join(sections)
 
@@ -305,11 +340,20 @@ def llm_select_action_uniform(state, weight, action_mapping, objective_names,
     ]
 
     try:
-        raw = call_policy_llm(messages, temperature=0.2, max_tokens=15)
-        m = re.search(r"\d+", raw)
-        if m is None:
-            raise ValueError(f"no integer in '{raw}'")
-        idx = int(m.group(0))
+        # CoT mode emits reasoning prose before the index; allocate more tokens
+        # and extract the LAST integer in the response (the final answer).
+        max_tok = 400 if use_cot else 15
+        raw = call_policy_llm(messages, temperature=0.2, max_tokens=max_tok)
+        if use_cot:
+            matches = re.findall(r"\d+", raw)
+            if not matches:
+                raise ValueError(f"no integer in '{raw[:200]}'")
+            idx = int(matches[-1])
+        else:
+            m = re.search(r"\d+", raw)
+            if m is None:
+                raise ValueError(f"no integer in '{raw}'")
+            idx = int(m.group(0))
         if idx not in id_to_action:
             raise ValueError(f"idx {idx} not in valid set (top: {valid_ids[:8]}...)")
         return id_to_action[idx], idx
@@ -338,7 +382,7 @@ def _unshape_reward(reward, done):
 # ── Episode runner ────────────────────────────────────────────────────────
 def _episode(game, generation_method, simulator, case, action_mapping,
              weight, objective_names, objective_descriptions, max_horizon,
-             include_pareto_hint, include_feedback):
+             include_pareto_hint, include_feedback, use_cot=False):
     state = game.reset(case, simulator)
     state['w'] = np.array(weight)
 
@@ -355,6 +399,7 @@ def _episode(game, generation_method, simulator, case, action_mapping,
             step_in_episode=t, feedback_log=feedback_log,
             include_pareto_hint=include_pareto_hint,
             include_feedback=include_feedback,
+            use_cot=use_cot,
         )
 
         pre_dialogue = list(state.get('dialogue_context', []))
@@ -470,6 +515,8 @@ def parse_eval_args():
                        help='Disable the Pareto-strategy briefing.')
     extra.add_argument('--uniform_3d', action='store_true',
                        help='Use 3D uniform weight [1/3,1/3,1/3,0] (match PADPP paper).')
+    extra.add_argument('--cot', action='store_true',
+                       help='Enable chain-of-thought reasoning before action selection.')
     extra_args, _ = extra.parse_known_args(sys.argv[1:])
     return base_args, vars(extra_args)
 
@@ -571,14 +618,15 @@ if __name__ == '__main__':
 
     include_pareto_hint = not eval_overrides['no_pareto_hint']
     include_feedback = not eval_overrides['no_feedback']
+    use_cot = eval_overrides['cot']
 
     policy_model = _policy_model_name()
     logger.info(f"Policy LLM: {policy_model}")
     logger.info(f"Weight vector: {weight}")
-    logger.info(f"Pareto hint: {include_pareto_hint} | Reward feedback: {include_feedback}")
+    logger.info(f"Pareto hint: {include_pareto_hint} | Reward feedback: {include_feedback} | CoT: {use_cot}")
     print(f"Policy LLM: {policy_model}")
     print(f"Weight vector: {weight}")
-    print(f"Pareto hint: {include_pareto_hint}, Reward feedback: {include_feedback}\n")
+    print(f"Pareto hint: {include_pareto_hint}, Reward feedback: {include_feedback}, CoT: {use_cot}\n")
 
     max_horizon = getattr(game_config, 'max_horizon', 10)
     raw_results = []
@@ -586,7 +634,7 @@ if __name__ == '__main__':
         try:
             r = _episode(game, generation_method, sim, case, action_mapping,
                          weight, objective_names, objective_descriptions, max_horizon,
-                         include_pareto_hint, include_feedback)
+                         include_pareto_hint, include_feedback, use_cot=use_cot)
             raw_results.append(r)
             logger.info(
                 f"[Uniform] ep{idx}: turns={r['n_turns']} success={r[SUCCESS_RATE]} "
