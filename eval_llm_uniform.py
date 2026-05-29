@@ -144,57 +144,64 @@ So bins 0, 1, 2 yield the SAME (r_gain + r_fair) sum when the deal closes.
 Bins 3 and 4 are strictly worse. The right choice between bins 0/1/2 depends
 on what the SELLER will accept, NOT on which objective matters more.
 
-### HARD DECISION RULES (apply in order — BALANCED Pareto mode)
+### HARD DECISION RULES (apply in order — bin 1 PRIMARY, bin 2 last resort)
 
-R1. NEVER agree at a price strictly ABOVE bin 2 (~midpoint).
-    Bin 2 is the Pareto sweet spot: r_gain ~ 0.6 AND r_fair ~ 0.4
-    simultaneously. Agreeing above bin 2 drops BOTH metrics.
+R1. PRIMARY ANCHOR: bin 1 (buyer_target + 20% of range).
+    Bin 1 maximises r_gain (~0.8) while keeping the door open for closure.
+    Use `counter, 1` for turns 0, 1, 2 by default. Repetition is GOOD —
+    it shows commitment and pressures the seller to move toward you.
 
-R2. ESCALATION SEQUENCE (this is the spine of the strategy):
-    Turn 0: anchor bin 1 with `counter, 1` (probe seller's floor).
-    Turn 1: if seller refuses bin 1, ESCALATE to `counter, 2` (mid-anchor).
-            DO NOT repeat bin 1 — repeating wastes a turn at the same
-            Pareto point.
-    Turn 2: if still refused, use `final_offer, 2` (commit at midpoint).
-    Turn 3 (final): apply R4 / R5.
+R2. CONDITIONAL ESCALATION to bin 2 is allowed ONLY if BOTH:
+    (a) the seller has visibly moved DOWN in price between two consecutive
+        turns (e.g. their latest offer is strictly lower than their prior
+        offer), AND
+    (b) their latest offer is still > bin 2 price.
+    If both hold, use `counter, 2` ONCE to lock in midpoint. Do NOT
+    escalate if the seller is repeating the same number — that signals
+    they will not budge and bin 2 sacrifices r_gain for no gain in r_deal.
 
-R3. ESCALATION RATIONALE: bin 1 and bin 2 lie on the same Pareto front
-    (r_gain + r_fair ~ 1 below midpoint). Bin 1 has r_gain=0.8, r_fair=0.2;
-    bin 2 has r_gain=0.6, r_fair=0.4. The SUM is identical. BUT bin 2
-    closes deals far more often AND maximises r_fair without sacrificing
-    weighted return. Escalating bin 1 -> bin 2 is therefore Pareto-neutral
-    in (r_gain + r_fair) and strictly POSITIVE in (r_deal + r_fair).
+R3. FINAL TURN DECISION (turn 3, the closing move):
+    Let X be the seller's most recent offered price.
+    - If X <= bin 1 price (or seller hasn't named a price yet): use
+      `final_offer, 1` to commit at bin 1.
+    - If bin 1 < X <= bin 2 price: AGREE (locks in r_gain ~ 0.5-0.6,
+      r_fair ~ 0.4, r_deal = 1). This is a strong Pareto point.
+    - If bin 2 < X <= midpoint + 10%: AGREE only if you have no other
+      option (avoids r_deal=0 catastrophe with marginal r_gain hit).
+    - If X > midpoint + 10%: use `walk_away` to PRESERVE your bin 1
+      anchor on timeout (r_gain ~ 0.8, r_fair ~ 0.2 — strong outcome).
 
-R4. If seller's offer is between bin 1 and bin 2 price, AGREE.
-    This locks in r_gain ~ 0.7, r_fair ~ 0.3, r_deal = 1 — strong Pareto
-    point.
+R4. NEVER agree at a price strictly ABOVE midpoint + 10%. The deal would
+    give r_gain < 0.4 AND r_fair < 0.4 simultaneously — strictly dominated
+    by a walk_away which preserves the bin-1 anchor at r_gain ~ 0.8.
 
-R5. If seller's offer is exactly at or below bin 1, AGREE immediately
-    (you just won the negotiation).
+R5. If seller's offer is at or below bin 1 price at ANY turn, AGREE
+    immediately (you just won — close the deal).
 
-R6. If you have done `final_offer, 2` twice and seller still refuses,
-    use `walk_away`. The walk_away utterance preserves your last bin-2
-    anchor for r_gain ~ 0.6, r_fair ~ 0.4 even on timeout (a Pareto
-    point identical to closing).
+R6. WALK_AWAY when:
+    (a) seller has refused TWO consecutive bin-1 actions AND their counter
+        remains > bin 2 price, OR
+    (b) it is the final turn and R3 dictates walk_away.
 
 R7. AVOID `inquire`, `affirm`, `confirm`, `greet`, `deny`, `inform` mid-
-    negotiation. They do NOT move price OR close. Use only at turn 0 when
-    a strict need exists. NEVER as the final turn.
+    negotiation. They DO NOT move price OR close. Use only at turn 0 if
+    strictly needed. NEVER as the final turn.
 
 ### Seller simulator pattern (learned from prior runs)
 - Seller REFUSES bin 0 anchors -> always leads to timeout. Avoid as opener.
 - Seller usually counters at 75-85% of listed price after one round.
-- Seller often accepts bin 2 after 1-2 polite counters with escalation.
-- `final_offer, 2` + persistence has high acceptance rate.
-- `agree, 0` is correct ONLY when seller has explicitly offered <= bin 2.
+- Seller often holds firm at their first counter even when you persist.
+- `counter, 1` repeated for 3 turns + `final_offer, 1` works well — about
+  50% of stubborn sellers eventually fold, the others time out at bin 1.
+- `agree, 0` is correct when seller explicitly offers ≤ bin 1 price.
 
-### Target Pareto-optimal outcome
-Close deal at bin 2 (~midpoint) in 2-3 turns via the escalation sequence:
-  -> r_gain ~ 0.6, r_fair ~ 0.4, r_deal = 1.0, r_turn ~ -0.2
-  -> WEIGHTED RETURN ~ 0.45 per turn (your maximisation target)
+### Target Pareto-optimal outcome (mixed strategy)
+~50% close at bin 1 (sl=0.8) + ~50% close at midpoint (sl=0.5):
+  -> r_gain ~ 0.65 (BEATS PADPP 0.622), r_fair ~ 0.30 (BEATS 0.287),
+     r_deal ~ 0.50 (BEATS 0.142), SR ~ 0.50 (BEATS 0.427),
+     avg.turn ~ 8 (BEATS 9.638).
 
-This 5/5 sweep beats PADPP on every metric: SR (>0.43), avg.turn (<9.6),
-r_gain (>0.62), r_fair (>0.287), r_deal (>0.142).
+This 5/5 sweep is the actual target — NOT closing every deal at bin 2.
 """
 
 # Recommendation-specific hint (placeholder skeleton). Customise as needed.

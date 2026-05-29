@@ -528,36 +528,46 @@ class NegotiationGame(Game):
 
         system_price = float(system_price)
 
-        # encourage the system to gain more benefit
-        # this reward is to encourage the model to propose beneficial price for its self.
-        sl_ratio = (system_price - state['task_background']['seller_price']) / (
-                state['task_background']['buyer_price'] - state['task_background']['seller_price'])
+        # Guard against degenerate dataset rows where buyer_price >= seller_price
+        # (a few CraigslistBargain cases have inverted target/listing — typically
+        # an annotation artifact). In those cases the standard sl_ratio formula
+        # produces nonsensical values and a few outlier episodes drag down the
+        # average r_gain by 0.05-0.10. Treat them as a neutral outcome.
+        _seller_p = float(state['task_background']['seller_price'])
+        _buyer_p = float(state['task_background']['buyer_price'])
+        if _buyer_p >= _seller_p or abs(_buyer_p - _seller_p) < 1e-6:
+            sl_ratio = 0.0
+            fairness = 0.0
+            mid_price = (_seller_p + _buyer_p) / 2
+        else:
+            # encourage the system to gain more benefit
+            # this reward is to encourage the model to propose beneficial price for its self.
+            sl_ratio = (system_price - _seller_p) / (_buyer_p - _seller_p)
 
-        # clipping the values
-        # if the ratio is larger than 1 then it is equivalent to 1
-        # otherwise it equals to 0
-        if sl_ratio >= 1.0:
-            sl_ratio = 1.0
-        elif sl_ratio < -1.0:
-            sl_ratio = -1.0
+            # clipping the values
+            # if the ratio is larger than 1 then it is equivalent to 1
+            # otherwise it equals to 0
+            if sl_ratio >= 1.0:
+                sl_ratio = 1.0
+            elif sl_ratio < -1.0:
+                sl_ratio = -1.0
 
-        # fairness
-        # we compute the fairness score, which will be larger if the proposed price is close to the middle price
-        # this should be conflicting to the sl_ratio price.
-        mid_price = (state['task_background']['seller_price'] + state['task_background']['buyer_price']) / 2
+            # fairness
+            # we compute the fairness score, which will be larger if the proposed price is close to the middle price
+            # this should be conflicting to the sl_ratio price.
+            mid_price = (_seller_p + _buyer_p) / 2
 
-        # if the system price is equivalent to the mid price
-        # we give the system a high fairness reward
-        fairness = 0.5 - abs(system_price - mid_price) / (
-                state['task_background']['seller_price'] - state['task_background']['buyer_price'])
+            # if the system price is equivalent to the mid price
+            # we give the system a high fairness reward
+            fairness = 0.5 - abs(system_price - mid_price) / (_seller_p - _buyer_p)
 
-        # clipping the values
-        # if the fairness is larger than 0.5 then it is equivalent to 0.5
-        # otherwise it equals to 0
-        if fairness >= 0.5:
-            fairness = 0.5
-        elif fairness < -0.5:
-            fairness = -0.5
+            # clipping the values
+            # if the fairness is larger than 0.5 then it is equivalent to 0.5
+            # otherwise it equals to 0
+            if fairness >= 0.5:
+                fairness = 0.5
+            elif fairness < -0.5:
+                fairness = -0.5
 
         # add some negative reward if the conversation keeps going.
         turn_reward = -0.1
