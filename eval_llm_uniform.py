@@ -134,6 +134,14 @@ R5. If seller's offer is between bin 1 and bin 2 AND only 1 turn remains,
 R6. If seller refuses your final_offer at bin 1 twice, use `walk_away`.
     Timeout at bin 1 anchor gives r_gain ~ 0.8 (better than capitulating).
 
+R7. AVOID `inquire`, `affirm`, `confirm`, `greet`, `deny` mid-negotiation.
+    These actions DO NOT MOVE THE PRICE; they only burn turns. Use them
+    ONLY when (a) it is genuinely turn 0 with zero prior dialogue or
+    (b) you need ONE round of stalling and the seller has shown signs of
+    flexibility (offered to lower their price in the previous turn).
+    NEVER use `inquire` as the FINAL turn — it wastes the closing move
+    and produces no commit signal.
+
 ### Seller simulator pattern (learned from prior runs)
 - Seller REFUSES bin 0 anchors -> always leads to timeout. Avoid as opener.
 - Seller usually counters at 75-85% of listed price after one round.

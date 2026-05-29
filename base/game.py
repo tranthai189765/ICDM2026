@@ -484,13 +484,14 @@ class NegotiationGame(Game):
         # extracting the price proposed by the system
         system_prices = re.findall(r"[-+]?\d*\.?\d+", system_response.replace(",", ""))
 
-        # Special-case: 'inform' and 'walk_away' are non-committal w.r.t. price.
-        # If the current utterance has no price, fall back to the agent's MOST
-        # RECENT previously-committed price (from earlier assistant turns),
-        # not to seller_price (which would zero out r_gain even after a perfect
-        # low anchor). This matters most for walk_away after several counter-
-        # offers, where defaulting to seller_price destroyed the r_gain metric.
-        if action in ("inform", "walk_away") and len(system_prices) == 0:
+        # If the current agent utterance has NO numeric price (inquire, inform,
+        # walk_away, disagree, greet, affirm, deny, confirm, counter-noprice
+        # all routinely emit price-free utterances under their generation
+        # prompts), fall back to the agent's MOST RECENT previously-committed
+        # price from earlier assistant turns. Without this, choosing a non-
+        # price action like 'inquire' after several good anchors collapses
+        # system_price to seller_price and destroys the r_gain metric.
+        if len(system_prices) == 0:
             system_price = None
             # dialogue_context: [..., last_assistant, last_user]; scan backwards
             # over previous assistant turns to find the last numeric anchor.
@@ -504,11 +505,26 @@ class NegotiationGame(Game):
                         system_price = max(prev_prices)
                         break
             if system_price is None:
+                # No prior anchor at all (turn 0 with a non-price action) →
+                # treat as seller-favorable null outcome.
                 system_price = state['task_background']['seller_price']
-        elif len(system_prices) > 0 and action != "inform":
+        elif action != "inform":
             system_price = max(system_prices)
         else:
-            system_price = state['task_background']['seller_price']
+            # 'inform' that DOES mention a price (e.g. market reference) — be
+            # cautious: don't credit that as an anchor, use prior real anchor.
+            system_price = None
+            for prev_turn in reversed(state['dialogue_context'][:-2]):
+                if prev_turn.get('role') == 'assistant':
+                    prev_prices = re.findall(
+                        r"[-+]?\d*\.?\d+",
+                        (prev_turn.get('content') or '').replace(",", "")
+                    )
+                    if prev_prices:
+                        system_price = max(prev_prices)
+                        break
+            if system_price is None:
+                system_price = state['task_background']['seller_price']
 
         system_price = float(system_price)
 
