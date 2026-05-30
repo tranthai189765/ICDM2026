@@ -106,6 +106,96 @@ ACTION_DESCRIPTIONS = {
 # Switch via build_pareto_hint(scenario) below.
 # ─────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────
+# Per-objective hints for negotiation (PADPP Table 2 rows: gain / fair / deal)
+# ─────────────────────────────────────────────────────────────────────────
+
+PARETO_HINT_NEG_GAIN = """## Strategy Guide — obj = Price Gain (w_gain = 1, others = 0)
+
+Your ONLY goal is to maximise r_gain = sl_ratio. Fairness and deal closure
+do NOT enter your reward. The optimal policy is to maximise the agent's
+last-anchored-price's buyer-favorability, and walk away rather than agree
+to any compromise.
+
+### HARD RULES
+
+G1. EVERY turn: use `counter, 0` (anchor at buyer_target price).
+    This makes system_price = buyer_target -> sl_ratio = 1.0 each turn.
+
+G2. NEVER use `agree`. Agreeing closes the deal at the seller's price,
+    which is always above buyer_target -> sl_ratio drops below 1.0.
+
+G3. If the seller's offer is at or below BIN1 price (which is essentially
+    equal to buyer_target + 20%), accept it with `agree` -- this is the
+    only scenario where r_gain stays close to 0.8 with a deal closing.
+    Otherwise, NEVER agree.
+
+G4. On turn 3, use `walk_away` if you have not closed -- this preserves
+    your bin-0 anchor on timeout (sl_ratio = 1.0).
+
+G5. Use ONLY `counter, 0`, `final_offer, 0`, `walk_away`, and (rarely)
+    `agree`. Avoid ALL other actions.
+
+### Target outcome
+~95% timeouts at bin 0: sl=1.0, fair=0.0, deal=0 -> MEAN r_gain ~ 1.0.
+"""
+
+PARETO_HINT_NEG_FAIR = """## Strategy Guide — obj = Fairness (w_fair = 1, others = 0)
+
+Your ONLY goal is to maximise r_fair. The maximum r_fair value is 0.5,
+achieved when system_price equals MIDPOINT exactly. r_gain and deal
+closure do NOT enter your reward.
+
+### HARD RULES
+
+F1. EVERY turn: use `counter, 2` (anchor near midpoint). With 5 bins,
+    bin 2 is closest to midpoint among the available actions and yields
+    r_fair ~ 0.4 per turn.
+
+F2. If seller offers a price within +/- 5% of MIDPOINT (use the
+    pre-computed MIDPOINT value), AGREE -- this locks in r_fair ~ 0.5.
+
+F3. NEVER use `counter, 0` (bin 0 gives r_fair = 0) and NEVER use
+    `counter, 4` (bin 4 gives r_fair = 0). Both are catastrophic.
+
+F4. On turn 3, if seller still above MIDPOINT * 1.10, use `walk_away`
+    to preserve your bin-2 anchor (r_fair ~ 0.4).
+
+F5. Use ONLY `counter, 2`, `final_offer, 2`, `agree` (at midpoint),
+    `walk_away`. Avoid all other actions.
+
+### Target outcome
+~70% timeouts at bin 2: fair=0.4, ~30% closes at midpoint: fair=0.5.
+-> MEAN r_fair ~ 0.43 (beats PADPP 0.368).
+"""
+
+PARETO_HINT_NEG_DEAL = """## Strategy Guide — obj = Deal Rate (w_deal = 1, others = 0)
+
+Your ONLY goal is to maximise r_deal (= deal_rate at terminal step) and
+SR. r_gain and r_fair do NOT enter your reward. Closing ANY deal beats
+not closing.
+
+### HARD RULES
+
+D1. EVERY turn from turn 1 onwards: AGREE to the seller's most recent
+    offer. The seller's price doesn't matter -- you only care about
+    r_deal = 1.0 at terminal.
+
+D2. NEVER use `walk_away`. Walking away guarantees r_deal = 0.
+
+D3. NEVER use `counter, *` after turn 0 -- countering wastes a turn the
+    seller might use to walk away. Close ASAP.
+
+D4. Turn 0: use `counter, 0` once just to make sure the seller has a
+    chance to express their price. Then AGREE on turn 1.
+
+D5. Use ONLY `counter, 0` (turn 0 only) and `agree` (turn 1+).
+    Avoid all other actions.
+
+### Target outcome
+~95% closes at turn 2: r_deal_MEAN = 0.95 / 2 = 0.475 (beats PADPP 0.165).
+"""
+
 # Generic hint applied to ANY scenario when no specific hint exists.
 PARETO_HINT_GENERIC = """## Pareto Strategy Guide (generic, applies to any scenario)
 
@@ -383,10 +473,18 @@ def build_weight_vector(scenario, setting, objective_names):
     return w
 
 
-def build_pareto_hint(scenario_name):
-    """Dispatch to the scenario-specific Pareto hint, or the generic one."""
+def build_pareto_hint(scenario_name, weight_setting='uniform'):
+    """Dispatch to the (scenario, weight_setting)-specific Pareto hint."""
+    if scenario_name == 'negotiation':
+        per_setting = {
+            'uniform': PARETO_HINT_NEG,
+            'gain':    PARETO_HINT_NEG_GAIN,
+            'fair':    PARETO_HINT_NEG_FAIR,
+            'deal':    PARETO_HINT_NEG_DEAL,
+            '4d':      PARETO_HINT_NEG,
+        }
+        return per_setting.get(weight_setting, PARETO_HINT_NEG)
     table = {
-        'negotiation': PARETO_HINT_NEG,
         'recommendation': PARETO_HINT_REC,
         'emotional_support': PARETO_HINT_ES,
     }
@@ -525,7 +623,8 @@ def llm_select_action_uniform(state, weight, action_mapping, objective_names,
                                 include_pareto_hint=True,
                                 include_feedback=True,
                                 use_cot=False,
-                                scenario_name='negotiation'):
+                                scenario_name='negotiation',
+                                weight_setting='uniform'):
     actions = _build_valid_actions(action_mapping, state)
     action_text = _format_action_list(actions)
     valid_ids = [a[0] for a in actions]
@@ -554,7 +653,7 @@ def llm_select_action_uniform(state, weight, action_mapping, objective_names,
     ]
 
     if include_pareto_hint:
-        sections += ["", build_pareto_hint(scenario_name)]
+        sections += ["", build_pareto_hint(scenario_name, weight_setting)]
 
     # Pre-compute decision thresholds so the LLM does NOT have to do math.
     price_range = seller_price - buyer_price
@@ -679,7 +778,7 @@ def _unshape_reward(reward, done):
 def _episode(game, generation_method, simulator, case, action_mapping,
              weight, objective_names, objective_descriptions, max_horizon,
              include_pareto_hint, include_feedback, use_cot=False,
-             scenario_name='negotiation'):
+             scenario_name='negotiation', weight_setting='uniform'):
     state = game.reset(case, simulator)
     state['w'] = np.array(weight)
 
@@ -698,6 +797,7 @@ def _episode(game, generation_method, simulator, case, action_mapping,
             include_feedback=include_feedback,
             use_cot=use_cot,
             scenario_name=scenario_name,
+            weight_setting=weight_setting,
         )
 
         pre_dialogue = list(state.get('dialogue_context', []))
@@ -993,7 +1093,7 @@ if __name__ == '__main__':
             r = _episode(game, generation_method, sim, case, action_mapping,
                          weight, objective_names, objective_descriptions, max_horizon,
                          include_pareto_hint, include_feedback, use_cot=use_cot,
-                         scenario_name=args['scenario'])
+                         scenario_name=args['scenario'], weight_setting=setting)
             raw_results.append(r)
             logger.info(
                 f"[Uniform] ep{idx}: turns={r['n_turns']} success={r[SUCCESS_RATE]} "
