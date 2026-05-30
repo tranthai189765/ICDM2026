@@ -169,10 +169,11 @@ R2. TURN 2 — ADAPTIVE BRANCH (this is the most important rule):
 R3. TURN 3 — CLOSING DECISION (this is the second most important rule):
     Let X = seller's most recent offered price.
     Let BIN1 = buyer_target + 0.2 * range, BIN2 = buyer_target + 0.4 * range.
+    Let MIDPOINT = (buyer_target + seller_listed) / 2.
     - If X <= BIN1: AGREE  (rare but ideal — you got bin 1 or better).
-    - If BIN1 < X <= BIN2: AGREE (Pareto-optimal close: sl~0.6, fair~0.4).
-    - If X > BIN2: `walk_away`  (DO NOT agree above bin 2; preserve your
-      current anchor which is either bin 1 or bin 2 depending on R2).
+    - If BIN1 < X <= MIDPOINT * 1.05: AGREE  (Pareto-acceptable close;
+      contributes meaningfully to r_deal and r_fair).
+    - If X > MIDPOINT * 1.05: `walk_away`  (preserve current anchor).
 
 R4. NEVER agree at a price strictly above BIN2. Above bin 2 the deal
     gives r_gain < 0.6 AND r_fair < 0.4 BOTH simultaneously — strictly
@@ -197,6 +198,23 @@ R7. FORBIDDEN ACTIONS (treat these as Pareto-dominated, never select):
     to YOU and destroys your r_gain. Choose ONLY from the price-
     committing actions: `propose`, `counter`, `final_offer`, `agree`,
     or the terminal action `walk_away`.
+
+R8. EARLY-CLOSE OPPORTUNISM (CRITICAL — this rule decides r_deal):
+    At ANY turn t >= 1 (NOT just the final turn), evaluate the seller's
+    most recent offer X. Compute MIDPOINT = (buyer_target + seller_listed) / 2.
+
+    - If X <= MIDPOINT * 1.05  (within 5% of midpoint or below):
+      AGREE IMMEDIATELY on this turn. Do NOT counter further.
+
+    Reason: r_deal is measured as the MEAN of deal_rate over all turns
+    of the episode. A deal closing at turn 2 contributes 0.5 to r_deal
+    mean; a deal closing at turn 4 contributes only 0.25. Closing EARLY
+    at a Pareto-acceptable price triples r_deal compared to a late close.
+
+    AVOID the trap of squeezing for an extra 5% r_gain over 2 more turns
+    -- the avg_turn penalty plus the r_deal dilution outweigh the gain.
+
+    R8 takes precedence over R1, R2, R3 when triggered.
 
 ### Seller simulator pattern (CRITICAL — internalise this for R2)
 - ~50% of sellers are STUBBORN: they repeat their first counter price
@@ -382,11 +400,14 @@ Reasoning (briefly):
       P_now  = seller's most recent offer (if any)
       Compute drop_pct = (P_prev - P_now) / P_prev if both present.
       Is drop_pct >= 0.10 (FLEXIBLE) or < 0.10 (STUBBORN)?
-  Q3. Compute BIN1 = buyer_target + 0.2 * (seller_listed - buyer_target)
-                and BIN2 = buyer_target + 0.4 * (seller_listed - buyer_target).
-      Where is P_now relative to BIN1 and BIN2?
-  Q4. Which HARD DECISION RULE R1-R7 applies (cite the rule number).
-  Q5. What action ID does that rule prescribe?
+  Q3. Compute BIN1 = buyer_target + 0.2 * (seller_listed - buyer_target),
+                BIN2 = buyer_target + 0.4 * (seller_listed - buyer_target),
+                MIDPOINT = (buyer_target + seller_listed) / 2.
+      Where is P_now relative to BIN1, BIN2, MIDPOINT?
+  Q4. **CHECK R8 FIRST**: is turn >= 1 AND P_now <= MIDPOINT * 1.05?
+      If yes, the answer is AGREE immediately. R8 takes precedence.
+  Q5. If R8 does NOT trigger, which other RULE R1-R7 applies?
+  Q6. What action ID does the selected rule prescribe?
 
 After reasoning, output the FINAL answer on its own line, using the EXACT
 format (no extra prose, no quotes, no parentheses):
