@@ -684,11 +684,20 @@ def _episode(game, generation_method, simulator, case, action_mapping,
             break
 
     arr = np.array(epi_rewards_raw)
-    terminal = arr[-1]  # already raw
     n_obj = arr.shape[1]
-    sl = float(terminal[0]) if n_obj >= 1 else 0.0
-    fair = float(terminal[1]) if n_obj >= 2 else 0.0
-    deal_rate = float(terminal[2]) if n_obj >= 3 else 0.0
+    # PADPP paper convention: episode-level metric = MEAN across all agent
+    # decision turns of the conversation. See
+    # PADPP_original/padpp/trainer.py:1254 `epi_reward.mean(dim=0)`.
+    # We default to the paper convention so numbers compare apples-to-apples
+    # with Table 2; we also expose the terminal-only values for diagnosis.
+    mean_per_obj = arr.mean(axis=0)
+    terminal = arr[-1]
+    sl   = float(mean_per_obj[0]) if n_obj >= 1 else 0.0
+    fair = float(mean_per_obj[1]) if n_obj >= 2 else 0.0
+    deal_rate = float(mean_per_obj[2]) if n_obj >= 3 else 0.0
+    sl_terminal   = float(terminal[0]) if n_obj >= 1 else 0.0
+    fair_terminal = float(terminal[1]) if n_obj >= 2 else 0.0
+    deal_terminal = float(terminal[2]) if n_obj >= 3 else 0.0
     utterance_count = len(state['dialogue_context'])
 
     # Cumulative weighted return (paper-style sanity check)
@@ -697,15 +706,19 @@ def _episode(game, generation_method, simulator, case, action_mapping,
     return {
         SUCCESS_RATE: int(done == 1),
         AVG_TURN: [conv_turn, 0],
-        SL_RATIO: sl,
+        SL_RATIO: sl,                        # PADPP mean convention
         FAIRNESS: fair,
         DEAL_RATE: deal_rate,
+        'sl_terminal':   sl_terminal,        # Terminal-only (our previous default)
+        'fair_terminal': fair_terminal,
+        'deal_terminal': deal_terminal,
         'n_turns': conv_turn,
         'n_utterances': utterance_count,
         'done_flag': int(done),
         'outcome': "success" if done == 1 else ("failure" if done == -1 else "ongoing"),
         'weight_vector': list(weight),
         'final_reward_raw': arr[-1].tolist(),
+        'mean_reward_raw': mean_per_obj.tolist(),
         'cumulative_weighted_return': cum_weighted,
         'turns': turns,
         'task_background': dict(state['task_background']),
@@ -718,9 +731,14 @@ def _aggregate(results):
         'SR':        sum(r[SUCCESS_RATE]    for r in results) / n,
         'avg_turn':  sum(r['n_utterances'] for r in results) / n,
         'avg_steps': sum(r[AVG_TURN][0]    for r in results) / n,
+        # PADPP paper convention: mean-over-turns
         'r_gain':    sum(r[SL_RATIO]       for r in results) / n,
         'r_fair':    sum(r[FAIRNESS]       for r in results) / n,
         'r_deal':    sum(r[DEAL_RATE]      for r in results) / n,
+        # Terminal-only convention (more intuitive "final outcome" metric)
+        'r_gain_terminal': sum(r['sl_terminal']   for r in results) / n,
+        'r_fair_terminal': sum(r['fair_terminal'] for r in results) / n,
+        'r_deal_terminal': sum(r['deal_terminal'] for r in results) / n,
         'weighted':  sum(r['cumulative_weighted_return'] for r in results) / n,
         'n':         n,
     }
@@ -769,8 +787,18 @@ def _print_table(average, n_ep, policy_model, weight, objective_names,
         return line
 
     if padpp_ref:
-        print(_row('PADPP (paper)', padpp_ref, show_steps=False))
-    print(_row('LLM baseline (this run)', average))
+        print(_row('PADPP (paper, MEAN conv.)', padpp_ref, show_steps=False))
+    print(_row('LLM baseline (MEAN conv.)', average))
+
+    # Also show the terminal-only convention for diagnostic purposes — it
+    # is the more intuitive 'final outcome' metric and was what we used
+    # before discovering the paper convention.
+    terminal_view = dict(average)
+    for short in ('r_gain', 'r_fair', 'r_deal'):
+        term_key = f"{short}_terminal"
+        if term_key in average:
+            terminal_view[short] = average[term_key]
+    print(_row('LLM baseline (TERMINAL view)', terminal_view))
 
     if padpp_ref:
         delta = {'SR': average['SR'] - padpp_ref['SR'],
@@ -778,7 +806,7 @@ def _print_table(average, n_ep, policy_model, weight, objective_names,
         for c in reward_cols:
             delta[c] = average.get(c, 0) - padpp_ref[c]
         print("-" * len(header))
-        line = f"{'Δ vs PADPP':<28} {delta['SR']:>+8.3f} {delta['avg_turn']:>+10.3f} {'':>7}"
+        line = f"{'Δ MEAN vs PADPP':<28} {delta['SR']:>+8.3f} {delta['avg_turn']:>+10.3f} {'':>7}"
         for c in reward_cols:
             line += f" {delta[c]:>+9.3f}"
         print(line)
