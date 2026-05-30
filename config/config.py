@@ -183,7 +183,7 @@ class NegotiationGameConfig(GameConfig):
     epsilon = 1.0
     terminated_action = "Say goodbye"
     max_horizon = 5
-    objectives = [SL_RATIO, FAIRNESS, SUCCESS_RATE, AVG_TURN]
+    objectives = [SL_RATIO, FAIRNESS, SUCCESS_RATE]
     n_objectives = len(objectives)
     pass
 

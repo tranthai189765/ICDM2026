@@ -26,10 +26,10 @@ num_train_q_network_epochs: 20
 buffer_length: 2000
 warmup_steps: 30
 # ── DMORL-specific ──────────────────────────────────────────────────────────
-n_basic_skills: 5
-n_advanced_skills: 5
-n_skill_train_epochs: 10
-n_advanced_train_epochs: 10
+n_basic_skills: 3
+n_advanced_skills: 1
+n_skill_train_epochs: 15
+n_advanced_train_epochs: 15
 use_dynamic_weight: true
 dynamic_weight_horizon: 3
 use_hints: true

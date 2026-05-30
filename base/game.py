@@ -610,32 +610,17 @@ class NegotiationGame(Game):
                 # logger.info('The conversation is on-going !')
                 pass
 
-        # vector-valued reward function
-        # sl_ratio / fairness are attenuated except at SUCCESSFUL terminal
-        # (done == 1). Both intermediate (done == 0) and timeout-failure
-        # (done == -1) get the small signal, so the agent cannot reward-hack
-        # by anchoring at a buyer-favorable price without closing a deal.
-        # 0.3 chosen as sweet spot: strong enough TD signal for the anchor
-        # strategy to dominate capitulation (0.1 made the gap too small and
-        # skills collapsed to 1-turn deals), but small enough that "refuse
-        # forever" doesn't beat actually closing a deal.
-        shaping = 1.0 if done == 1 else 0.3
-
+        # PADPP-original reward vector (3 dimensions): [sl_ratio, fairness, neg_sr].
+        # No shaping, no avg_turn objective -- matches the paper exactly.
         reward = []
-
-        # sale-list ratio
         if SL_RATIO in self.game_config.objectives:
-            reward.append(shaping * sl_ratio)
-        # fairness
+            reward.append(sl_ratio)
         if FAIRNESS in self.game_config.objectives:
-            reward.append(shaping * fairness)
-        # SR / deal_rate (YAML uses "deal_rate"; constants has both "sr" and "deal_rate")
+            reward.append(fairness)
         if SUCCESS_RATE in self.game_config.objectives or DEAL_RATE in self.game_config.objectives:
             reward.append(neg_sr)
-        # avg_turn: constant -0.1 per turn, NOT subject to shaping.
-        # Encourages closing deals quickly (fewer turns = smaller cumulative penalty).
         if AVG_TURN in self.game_config.objectives:
-            reward.append(turn_reward)   # turn_reward = -0.1 defined above
+            reward.append(turn_reward)
 
         logger.debug(f"reward={reward} done={done}")
         return reward, done, done

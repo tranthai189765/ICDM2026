@@ -4,5 +4,5 @@ saved_dir: "checkpoints/negotiation/"
 n: 10
 epsilon: 1.0
 max_horizon: 10
-objectives: [ "sl_ratio", "fairness", "deal_rate", "avg_turn" ]
+objectives: [ "sl_ratio", "fairness", "deal_rate" ]
 model_type: "chatgpt"

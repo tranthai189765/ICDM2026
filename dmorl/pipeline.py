@@ -32,7 +32,7 @@ from text_gen.bart_generation import BARTGeneration
 # Objective name maps per scenario (must match config.constants metric names)
 SCENARIO_OBJECTIVE_NAMES = {
     "recommendation":   ["user_reward", "item_freq"],
-    "negotiation":      ["sl_ratio", "fairness", "deal_rate", "avg_turn"],
+    "negotiation":      ["sl_ratio", "fairness", "deal_rate"],
     "emotional_support": ["user_reward", "toxicity", "avg_turn"],
 }
 

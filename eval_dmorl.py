@@ -111,22 +111,19 @@ def _episode(trainer, case, simulator, action_mapping, w, skill_name, max_horizo
             break
 
     arr = np.array(epi_rewards)                 # [n_turns, n_obj]
-    # PADPP convention: report TERMINAL-step objective rewards (the actual
-    # negotiated outcome), not the average over all turns. Intermediate
-    # turns have shaped or zero values and would dilute the headline numbers.
-    # base/game.py applies shaping = 0.3 to sl_ratio/fairness when done != 1
-    # (timeout failure). PADPP paper reports RAW values, so we undo the
-    # shaping for reporting to keep r_gain / r_fair on the same scale.
+    # PADPP paper convention: MEAN of each reward dimension across all agent
+    # decision turns of the episode. See PADPP_original/padpp/trainer.py:1254
+    # `epi_reward.mean(dim=0)`. Reward shaping is OFF (base/game.py was
+    # reverted to PADPP-original), so no un-shaping is needed.
+    mean_per_obj = arr.mean(axis=0)
     terminal = arr[-1]
     n_obj = arr.shape[1]
-    is_deal = (done == 1)
-    inv_shape = 1.0 if is_deal else (1.0 / 0.3)
-    sl = float(terminal[0]) * inv_shape if n_obj >= 1 else 0.0
-    fair = float(terminal[1]) * inv_shape if n_obj >= 2 else 0.0
-    deal_rate = float(terminal[2]) if n_obj >= 3 else 0.0
-    # Two ways to count "turns" — paper convention ambiguous so we report both:
-    #   - agent_steps: number of agent decisions (= conv_turn, max ~4 with max_horizon=10)
-    #   - utterance_count: total utterances in dialogue_context (= 2 initial + 2*agent_steps)
+    sl   = float(mean_per_obj[0]) if n_obj >= 1 else 0.0
+    fair = float(mean_per_obj[1]) if n_obj >= 2 else 0.0
+    deal_rate = float(mean_per_obj[2]) if n_obj >= 3 else 0.0
+    sl_terminal   = float(terminal[0]) if n_obj >= 1 else 0.0
+    fair_terminal = float(terminal[1]) if n_obj >= 2 else 0.0
+    deal_terminal = float(terminal[2]) if n_obj >= 3 else 0.0
     utterance_count = len(state['dialogue_context'])
     return {
         SUCCESS_RATE: int(done == 1),
@@ -134,6 +131,9 @@ def _episode(trainer, case, simulator, action_mapping, w, skill_name, max_horizo
         SL_RATIO: sl,
         FAIRNESS: fair,
         DEAL_RATE: deal_rate,
+        'sl_terminal':   sl_terminal,
+        'fair_terminal': fair_terminal,
+        'deal_terminal': deal_terminal,
         'skill': skill_name,
         'n_turns': conv_turn,
         'n_utterances': utterance_count,
@@ -152,34 +152,60 @@ def _aggregate(results):
     n = max(len(results), 1)
     return {
         'SR':        sum(r[SUCCESS_RATE]    for r in results) / n,
-        'avg_turn':  sum(r['n_utterances'] for r in results) / n,   # paper-style
-        'avg_steps': sum(r[AVG_TURN][0]    for r in results) / n,   # agent decisions
+        'avg_turn':  sum(r['n_utterances'] for r in results) / n,
+        'avg_steps': sum(r[AVG_TURN][0]    for r in results) / n,
+        # PADPP MEAN convention
         'r_gain':    sum(r[SL_RATIO]       for r in results) / n,
         'r_fair':    sum(r[FAIRNESS]       for r in results) / n,
         'r_deal':    sum(r[DEAL_RATE]      for r in results) / n,
+        # Terminal-only convention (diagnostic)
+        'r_gain_terminal': sum(r['sl_terminal']   for r in results) / n,
+        'r_fair_terminal': sum(r['fair_terminal'] for r in results) / n,
+        'r_deal_terminal': sum(r['deal_terminal'] for r in results) / n,
         'n':         n,
     }
 
 
+# PADPP Table 2 reference numbers (Negotiation, MEAN convention).
+# Keys are skill names in the eval skills_file. None = focal row, not measured.
+_PADPP_REF_BY_SKILL = {
+    "Uniform Balancer":      {'SR': 0.427, 'avg_turn': 9.638,
+                              'r_gain': 0.622, 'r_fair': 0.287, 'r_deal': 0.142},
+    "Price Gain Maximizer":  {'SR': 0.085, 'avg_turn': 9.898,
+                              'r_gain': 0.944, 'r_fair': None,  'r_deal': None},
+    "Fairness Maximizer":    {'SR': 0.126, 'avg_turn': 9.914,
+                              'r_gain': None, 'r_fair': 0.368,  'r_deal': None},
+    "Deal Maximizer":        {'SR': 0.489, 'avg_turn': 9.531,
+                              'r_gain': None, 'r_fair': None,   'r_deal': 0.165},
+}
+
+
 def _print_table(per_skill, average, n_ep):
-    sep = "=" * 96
+    sep = "=" * 105
     print()
     print(sep)
-    print(f" PADPP Table-2 style evaluation  (n={n_ep} episodes per skill)")
+    print(f" DMORL Table-2 evaluation (MEAN conv.)   (n={n_ep} episodes per skill)")
     print(sep)
-    # Columns match PADPP paper notation: SR, avg.turn, r_gain, r_fair, r_deal
-    # `avg.turn` is the utterance count (paper convention, 5-10 range).
-    # `steps` is the alternative agent-decision count for reference.
-    print(f"{'Skill':<28} {'SR':>8} {'avg.turn':>10} {'steps':>7} "
-          f"{'r_gain':>8} {'r_fair':>8} {'r_deal':>8}")
-    print("-" * 96)
+    print(f"{'Skill / row':<32} {'SR':>8} {'avg.turn':>10} {'r_gain':>9} {'r_fair':>9} {'r_deal':>9}")
+    print("-" * 105)
     for name, r in per_skill.items():
-        print(f"{name:<28} {r['SR']:>8.3f} {r['avg_turn']:>10.2f} {r['avg_steps']:>7.2f} "
-              f"{r['r_gain']:>8.3f} {r['r_fair']:>8.3f} {r['r_deal']:>8.3f}")
-    print("-" * 96)
-    print(f"{'AVERAGE':<28} {average['SR']:>8.3f} {average['avg_turn']:>10.2f} "
-          f"{average['avg_steps']:>7.2f} "
-          f"{average['r_gain']:>8.3f} {average['r_fair']:>8.3f} {average['r_deal']:>8.3f}")
+        ref = _PADPP_REF_BY_SKILL.get(name)
+        # DMORL row
+        gain_s = f"{r['r_gain']:>9.3f}"
+        fair_s = f"{r['r_fair']:>9.3f}"
+        deal_s = f"{r['r_deal']:>9.3f}"
+        print(f"{name + ' [DMORL]':<32} {r['SR']:>8.3f} {r['avg_turn']:>10.2f} "
+              f"{gain_s} {fair_s} {deal_s}")
+        # PADPP reference row, if available
+        if ref is not None:
+            gp = f"{ref['r_gain']:>9.3f}" if ref['r_gain'] is not None else f"{'-':>9}"
+            fp = f"{ref['r_fair']:>9.3f}" if ref['r_fair'] is not None else f"{'-':>9}"
+            dp = f"{ref['r_deal']:>9.3f}" if ref['r_deal'] is not None else f"{'-':>9}"
+            print(f"{name + ' [PADPP paper]':<32} {ref['SR']:>8.3f} {ref['avg_turn']:>10.3f} "
+                  f"{gp} {fp} {dp}")
+        print("-" * 105)
+    print(f"{'AVERAGE [DMORL]':<32} {average['SR']:>8.3f} {average['avg_turn']:>10.2f} "
+          f"{average['r_gain']:>9.3f} {average['r_fair']:>9.3f} {average['r_deal']:>9.3f}")
     print(sep)
 
 

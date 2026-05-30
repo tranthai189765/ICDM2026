@@ -268,12 +268,21 @@ class DMORLTrainer(PADPPTrainer):
         original_epochs = self.model_config.num_train_rl_epochs
         self.model_config.num_train_rl_epochs = self.model_config.n_advanced_train_epochs
 
+        adv_names = [s["name"] for s in advanced_skills]
         self._run_curriculum_rlt(cases, device, simulators, action_mapping,
-                                 skill_weights=adv_weights, p_skill=0.6,
+                                 skill_weights=adv_weights, skill_names=adv_names,
+                                 p_skill=0.6,
                                  phase="1b", skill_name="advanced")
 
         self.model_config.num_train_rl_epochs = original_epochs
         loguru_logger.info("[DMORL Phase-1b] Advanced skill training complete.")
+
+        # Save Phase 1b checkpoint so evaluation can load the final trained model.
+        saved_dir = getattr(self.model_config, "saved_dir", "checkpoints")
+        os.makedirs(saved_dir, exist_ok=True)
+        ckpt_path = os.path.join(saved_dir, "dmorl_phase1b.pth")
+        self.save_model(ckpt_path)
+        loguru_logger.info(f"[DMORL Phase-1b] Checkpoint saved → {ckpt_path}")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Internal: Curriculum RLT (shared by Phase 1a and 1b)

@@ -1,65 +1,29 @@
 {
   "basic": [
     {
-      "name": "Pure Hardball",
-      "description": "Anchors at buyer-favorable prices and resists concessions completely; maximize price gain even if it means fewer deals.",
-      "weight_vector": [0.75, 0.20, 0.05, 0.00],
+      "name": "Price Gain Maximizer",
+      "description": "Pure price-gain corner: prioritises lowest buyer-paid price exclusively. Equivalent to PADPP Table 2's obj=Price Gain row (weight [1, 0, 0]).",
+      "weight_vector": [1.0, 0.0, 0.0],
       "type": "basic"
     },
     {
-      "name": "Gain-Fair Hybrid",
-      "description": "Strong self-gain pressure tempered by fairness signaling; proposes prices closer to buyer target but frames them as fair.",
-      "weight_vector": [0.55, 0.40, 0.05, 0.00],
+      "name": "Fairness Maximizer",
+      "description": "Pure fairness corner: prioritises midpoint-priced outcomes exclusively. Equivalent to PADPP Table 2's obj=Fairness row (weight [0, 1, 0]).",
+      "weight_vector": [0.0, 1.0, 0.0],
       "type": "basic"
     },
     {
-      "name": "Fair-First Bargainer",
-      "description": "Prioritizes mid-range equitable outcomes with strong secondary self-gain emphasis; never accepts the listed price.",
-      "weight_vector": [0.35, 0.60, 0.05, 0.00],
-      "type": "basic"
-    },
-    {
-      "name": "Persistent Negotiator",
-      "description": "Gain-leaning with light deal-closure consideration; willing to extend dialogue to achieve below-mid pricing.",
-      "weight_vector": [0.60, 0.30, 0.10, 0.00],
-      "type": "basic"
-    },
-    {
-      "name": "Equity Strategist",
-      "description": "Tight balance between gain and fairness with minimal urgency to close; focuses on quality of price agreement.",
-      "weight_vector": [0.50, 0.45, 0.05, 0.00],
+      "name": "Deal Maximizer",
+      "description": "Pure deal-rate corner: prioritises closing any deal exclusively. Equivalent to PADPP Table 2's obj=Deal Rate row (weight [0, 0, 1]).",
+      "weight_vector": [0.0, 0.0, 1.0],
       "type": "basic"
     }
   ],
   "advanced": [
     {
-      "name": "Anchored Conceder",
-      "description": "Opens with aggressive anchor, concedes in small steps toward fair midpoints; combines gain bias with strategic fairness signaling.",
-      "weight_vector": [0.60, 0.35, 0.05, 0.00],
-      "type": "advanced"
-    },
-    {
-      "name": "Fair-First Closer",
-      "description": "Establishes mutually fair baseline early then leverages goodwill to push for better pricing.",
-      "weight_vector": [0.40, 0.50, 0.10, 0.00],
-      "type": "advanced"
-    },
-    {
-      "name": "Diplomatic Hardliner",
-      "description": "Strong price preference disguised through polite fairness rhetoric.",
-      "weight_vector": [0.65, 0.30, 0.05, 0.00],
-      "type": "advanced"
-    },
-    {
-      "name": "Reciprocity Driver",
-      "description": "Offers visible fair concessions to obligate seller reciprocation; drives price down while maintaining perceived fairness.",
-      "weight_vector": [0.50, 0.40, 0.10, 0.00],
-      "type": "advanced"
-    },
-    {
-      "name": "Composite Strategist",
-      "description": "Adaptive multi-objective strategy emphasizing price gain and fairness equally; deal closure is secondary.",
-      "weight_vector": [0.45, 0.45, 0.10, 0.00],
+      "name": "Uniform Balancer",
+      "description": "Uniform preference across all three objectives. Equivalent to PADPP Table 2's Uniform row (weight [1/3, 1/3, 1/3]).",
+      "weight_vector": [0.3333333333333333, 0.3333333333333333, 0.3333333333333334],
       "type": "advanced"
     }
   ]
