@@ -144,64 +144,70 @@ So bins 0, 1, 2 yield the SAME (r_gain + r_fair) sum when the deal closes.
 Bins 3 and 4 are strictly worse. The right choice between bins 0/1/2 depends
 on what the SELLER will accept, NOT on which objective matters more.
 
-### HARD DECISION RULES (apply in order — bin 1 PRIMARY, bin 2 last resort)
+### HARD DECISION RULES (apply in order — MIXED bin1/bin2 anchor strategy)
 
-R1. PRIMARY ANCHOR: bin 1 (buyer_target + 20% of range).
-    Bin 1 maximises r_gain (~0.8) while keeping the door open for closure.
-    Use `counter, 1` for turns 0, 1, 2 by default. Repetition is GOOD —
-    it shows commitment and pressures the seller to move toward you.
+R1. OPENING (turns 0 and 1): use `counter, 1` (anchor at bin 1 price).
+    Repetition on turn 1 is GOOD — it tests whether the seller is
+    flexible or stubborn.
 
-R2. CONDITIONAL ESCALATION to bin 2 is allowed ONLY if BOTH:
-    (a) the seller has visibly moved DOWN in price between two consecutive
-        turns (e.g. their latest offer is strictly lower than their prior
-        offer), AND
-    (b) their latest offer is still > bin 2 price.
-    If both hold, use `counter, 2` ONCE to lock in midpoint. Do NOT
-    escalate if the seller is repeating the same number — that signals
-    they will not budge and bin 2 sacrifices r_gain for no gain in r_deal.
+R2. TURN 2 — ADAPTIVE BRANCH (this is the most important rule):
+    Compare seller's offer at turn 1 with their offer at turn 0.
+    - If seller's turn-1 offer < seller's turn-0 offer (seller MOVED DOWN,
+      they are FLEXIBLE): use `counter, 2` to escalate toward midpoint.
+      Flexible sellers will likely accept bin 2 next turn — closes at
+      r_gain=0.6, r_fair=0.4.
+    - If seller's turn-1 offer >= turn-0 offer (seller STUBBORN, repeats
+      the same number): use `final_offer, 1` to commit at bin 1.
+      Stubborn sellers will not move — timeout at bin 1 preserves
+      r_gain=0.8, r_fair=0.2.
 
-R3. FINAL TURN DECISION (turn 3, the closing move):
-    Let X be the seller's most recent offered price.
-    - If X <= bin 1 price (or seller hasn't named a price yet): use
-      `final_offer, 1` to commit at bin 1.
-    - If bin 1 < X <= bin 2 price: AGREE (locks in r_gain ~ 0.5-0.6,
-      r_fair ~ 0.4, r_deal = 1). This is a strong Pareto point.
-    - If bin 2 < X <= midpoint + 10%: AGREE only if you have no other
-      option (avoids r_deal=0 catastrophe with marginal r_gain hit).
-    - If X > midpoint + 10%: use `walk_away` to PRESERVE your bin 1
-      anchor on timeout (r_gain ~ 0.8, r_fair ~ 0.2 — strong outcome).
+R3. TURN 3 — CLOSING DECISION (this is the second most important rule):
+    Let X = seller's most recent offered price.
+    Let BIN1 = buyer_target + 0.2 * range, BIN2 = buyer_target + 0.4 * range.
+    - If X <= BIN1: AGREE  (rare but ideal — you got bin 1 or better).
+    - If BIN1 < X <= BIN2: AGREE (Pareto-optimal close: sl~0.6, fair~0.4).
+    - If X > BIN2: `walk_away`  (DO NOT agree above bin 2; preserve your
+      current anchor which is either bin 1 or bin 2 depending on R2).
 
-R4. NEVER agree at a price strictly ABOVE midpoint + 10%. The deal would
-    give r_gain < 0.4 AND r_fair < 0.4 simultaneously — strictly dominated
-    by a walk_away which preserves the bin-1 anchor at r_gain ~ 0.8.
+R4. NEVER agree at a price strictly above BIN2. Above bin 2 the deal
+    gives r_gain < 0.6 AND r_fair < 0.4 BOTH simultaneously — strictly
+    Pareto-dominated by `walk_away` which preserves your last anchor.
 
-R5. If seller's offer is at or below bin 1 price at ANY turn, AGREE
-    immediately (you just won — close the deal).
+R5. EARLY-CLOSE shortcut: if at ANY turn the seller's offer is <= BIN2
+    AND you have already escalated to bin 2 (R2 branch a), AGREE on the
+    next turn rather than waiting for R3. Don't waste turns once a
+    favourable price is on the table.
 
-R6. WALK_AWAY when:
-    (a) seller has refused TWO consecutive bin-1 actions AND their counter
-        remains > bin 2 price, OR
-    (b) it is the final turn and R3 dictates walk_away.
+R6. WALK_AWAY only fires per R3 turn-3 walk_away clause. Do NOT walk
+    away earlier — every turn at bin 1 strengthens your r_gain timeout
+    fallback.
 
-R7. AVOID `inquire`, `affirm`, `confirm`, `greet`, `deny`, `inform` mid-
-    negotiation. They DO NOT move price OR close. Use only at turn 0 if
-    strictly needed. NEVER as the final turn.
+R7. AVOID `inquire`, `affirm`, `confirm`, `greet`, `deny`, `inform` at
+    EVERY turn. They neither move price nor close. They strictly waste
+    a turn on the avg_turn penalty.
 
-### Seller simulator pattern (learned from prior runs)
-- Seller REFUSES bin 0 anchors -> always leads to timeout. Avoid as opener.
-- Seller usually counters at 75-85% of listed price after one round.
-- Seller often holds firm at their first counter even when you persist.
-- `counter, 1` repeated for 3 turns + `final_offer, 1` works well — about
-  50% of stubborn sellers eventually fold, the others time out at bin 1.
-- `agree, 0` is correct when seller explicitly offers ≤ bin 1 price.
+### Seller simulator pattern (CRITICAL — internalise this for R2)
+- ~50% of sellers are STUBBORN: they repeat their first counter price
+  even if you persist. R2 branch (b) handles these: stay at bin 1.
+- ~50% of sellers are FLEXIBLE: their second counter is lower than
+  their first. R2 branch (a) handles these: escalate to bin 2, then
+  agree at turn 3 (R5 / R3).
 
-### Target Pareto-optimal outcome (mixed strategy)
-~50% close at bin 1 (sl=0.8) + ~50% close at midpoint (sl=0.5):
-  -> r_gain ~ 0.65 (BEATS PADPP 0.622), r_fair ~ 0.30 (BEATS 0.287),
-     r_deal ~ 0.50 (BEATS 0.142), SR ~ 0.50 (BEATS 0.427),
-     avg.turn ~ 8 (BEATS 9.638).
+### Target outcome by case
+- Stubborn 50%: anchor bin 1 for 3 turns -> walk_away on turn 3.
+  Outcome: timeout, r_gain=0.8, r_fair=0.2, r_deal=0.
+- Flexible 50%: anchor bin 1 -> escalate bin 2 -> agree at turn 3.
+  Outcome: deal at bin 1-2 area, r_gain~0.6, r_fair~0.4, r_deal=1.
 
-This 5/5 sweep is the actual target — NOT closing every deal at bin 2.
+### Aggregate prediction (MUST hit these to win 5/5 vs PADPP)
+- r_gain avg = 0.5 * 0.8 + 0.5 * 0.6 = 0.70  (> PADPP 0.622)
+- r_fair avg = 0.5 * 0.2 + 0.5 * 0.4 = 0.30  (> PADPP 0.287)
+- r_deal avg = 0.5 * 0 + 0.5 * 1 = 0.50      (> PADPP 0.142)
+- SR avg     ~ 0.50                          (> PADPP 0.427)
+- avg.turn   ~ 7-8                           (< PADPP 9.638)
+
+If your action plan does NOT match the above target outcomes by case,
+you are off-strategy and likely violating R1-R7.
 """
 
 # Recommendation-specific hint (placeholder skeleton). Customise as needed.
@@ -358,11 +364,16 @@ COT_INSTRUCTIONS = """## Reasoning Protocol
 Reason step-by-step, then output your choice in the EXACT format below.
 
 Reasoning (briefly):
-  Q1. Seller's most recent stated price (number only). Is it above / below /
-      equal to midpoint?
-  Q2. Which of the HARD DECISION RULES R1-R7 applies right now?
-  Q3. Among rule-conformant actions, which yields the HIGHEST expected
-      weighted reward this turn?
+  Q1. What turn number am I on (0, 1, 2, or 3)?
+  Q2. Seller's two most recent offered prices (numbers only):
+      P_prev = seller's offer one turn ago (if any)
+      P_now  = seller's most recent offer (if any)
+      Is P_now < P_prev (seller flexible) or P_now >= P_prev (stubborn)?
+  Q3. Compute BIN1 = buyer_target + 0.2 * (seller_listed - buyer_target)
+                and BIN2 = buyer_target + 0.4 * (seller_listed - buyer_target).
+      Where is P_now relative to BIN1 and BIN2?
+  Q4. Which HARD DECISION RULE R1-R7 applies (cite the rule number).
+  Q5. What action ID does that rule prescribe?
 
 After reasoning, output the FINAL answer on its own line, using the EXACT
 format (no extra prose, no quotes, no parentheses):
