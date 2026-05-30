@@ -154,24 +154,24 @@ R2. TURN 2 — ADAPTIVE BRANCH (this is the most important rule):
     Compare seller's offer at turn 1 with their offer at turn 0.
     Compute the percentage drop:
         drop_pct = (P_turn0 - P_turn1) / P_turn0
-    - If drop_pct >= 0.10 (seller dropped at least 10%): seller is
-      genuinely FLEXIBLE. Use `counter, 2` to escalate toward midpoint —
-      they are very likely to accept bin 2 next turn.
-    - If drop_pct < 0.10 (token movement, e.g. $1400 -> $1390, or no
-      movement at all): seller is STUBBORN. Use `final_offer, 1` to
-      commit at bin 1. Stubborn sellers will not move further — timeout
-      at bin 1 preserves r_gain = 0.8, r_fair = 0.2.
+    - If drop_pct >= 0.05 (seller dropped at least 5%): seller is
+      FLEXIBLE enough. Use `counter, 2` to escalate toward midpoint —
+      they are likely to accept bin 2 or fold to your final_offer next
+      turn. Bin 2 closes give r_fair = 0.4, which we need to beat PADPP.
+    - If drop_pct < 0.05 (essentially no movement): seller is STUBBORN.
+      Use `final_offer, 1` to commit at bin 1.
 
-    The 10% threshold is critical: a 1-2% token drop is just noise and
-    escalating wastes 0.2 of r_gain for nothing. Be CONSERVATIVE about
-    detecting flexibility.
+    The 5% threshold (lowered from 10%) trades some bin-1 timeouts for
+    bin-2 deals — accepting slightly lower r_gain (0.7 vs 0.8) in
+    exchange for much higher r_fair (0.4 vs 0.2) and a deal close
+    (r_deal +1, SR +1).
 
 R3. TURN 3 — CLOSING DECISION (this is the second most important rule):
     Let X = seller's most recent offered price.
-    Use the pre-computed BIN1, BIN2, MIDPOINT values from above.
-    - If X <= MIDPOINT: AGREE  (R8 likely already fired; this is backup).
-    - If X > MIDPOINT: `walk_away`  (preserve current anchor;
-      DO NOT agree above midpoint, the deal would land at sl < 0.5).
+    Use the pre-computed thresholds from above.
+    - If X <= R8 threshold (= MIDPOINT * 1.10): AGREE  (R8 likely
+      already fired; this is the safety net).
+    - If X > R8 threshold: `walk_away`  (preserve current anchor).
 
 R4. NEVER agree at a price strictly above BIN2. Above bin 2 the deal
     gives r_gain < 0.6 AND r_fair < 0.4 BOTH simultaneously — strictly
@@ -197,29 +197,26 @@ R7. FORBIDDEN ACTIONS (treat these as Pareto-dominated, never select):
     committing actions: `propose`, `counter`, `final_offer`, `agree`,
     or the terminal action `walk_away`.
 
-R8. EARLY-CLOSE OPPORTUNISM (CRITICAL — this rule decides r_deal):
+R8. EARLY-CLOSE OPPORTUNISM (CRITICAL — this rule decides r_deal/SR):
     At ANY turn t >= 1 (NOT just the final turn), evaluate the seller's
     most recent offer X.
 
-    - If X <= MIDPOINT  (STRICTLY at or below midpoint; use the
-      pre-computed MIDPOINT value from the 'Pre-computed Decision
-      Thresholds' section above): AGREE IMMEDIATELY on this turn.
-      Do NOT counter further.
+    - If X <= R8 threshold (pre-computed = MIDPOINT * 1.10, shown in
+      'Pre-computed Decision Thresholds' section): AGREE IMMEDIATELY
+      on this turn. Do NOT counter further.
 
-    - If X > MIDPOINT (even by a single dollar): R8 does NOT fire.
-      Fall through to R1-R3.
+    - If X > R8 threshold: R8 does NOT fire. Fall through to R1-R3.
 
-    THRESHOLD IS STRICT: the pre-computed MIDPOINT number is your line.
-    Do NOT 'agree' on prices above midpoint thinking they are 'close
-    enough' -- those close at sl_ratio < 0.5 and drag r_gain DOWN below
-    PADPP. The earlier failure mode (4 of 12 closes at sl < 0.4) was
-    caused by treating 'compromise' offers above midpoint as Pareto-
-    acceptable. They are NOT.
+    THRESHOLD IS STRICT: compare seller's offer NUMERICALLY to the
+    pre-printed R8 threshold dollar amount. The threshold extends just
+    slightly above midpoint to allow bin-3 closes (sl ~ 0.4, fair ~ 0.4
+    = max r_fair), without admitting the bad sl<0.4 closes we saw before.
 
     Reason for early close: r_deal is the MEAN of deal_rate over all
     turns. Closing at turn 2 contributes 0.5 to r_deal mean vs 0.25 at
     turn 4. Trading 1 turn of bin-1 anchor (-0.2 r_gain) for an early
-    close at midpoint (+0.25 r_deal +0.3 r_fair) is a net win.
+    bin-2/3 close (+0.25 r_deal, +0.2 r_fair) is a net win under
+    uniform weights.
 
     R8 takes precedence over R1-R3 when triggered.
 
@@ -563,7 +560,11 @@ def llm_select_action_uniform(state, weight, action_mapping, objective_names,
     price_range = seller_price - buyer_price
     BIN1_price = buyer_price + 0.2 * price_range
     BIN2_price = buyer_price + 0.4 * price_range
-    R8_threshold = mid_price  # strict midpoint — agree only at or below
+    BIN3_price = buyer_price + 0.6 * price_range
+    # R8 threshold: midpoint * 1.10 ≈ BIN3 price. This allows close at
+    # bin 3 (r_fair = 0.4 max) while excluding offers > 20% above midpoint
+    # (which previously caused bad sl=0.2-0.3 closes).
+    R8_threshold = mid_price * 1.10
 
     sections += [
         "",
@@ -574,9 +575,10 @@ def llm_select_action_uniform(state, weight, action_mapping, objective_names,
         f"Midpoint price:       ${mid_price:.0f}  ← Pareto sweet spot",
         "",
         "## Pre-computed Decision Thresholds (USE THESE EXACT NUMBERS)",
-        f"  BIN1 price       = ${BIN1_price:.0f}   (your low anchor)",
-        f"  BIN2 price       = ${BIN2_price:.0f}   (escalation target)",
-        f"  MIDPOINT (= R8 threshold) = ${R8_threshold:.0f}",
+        f"  BIN1 price        = ${BIN1_price:.0f}   (your low anchor)",
+        f"  BIN2 price        = ${BIN2_price:.0f}   (escalation target)",
+        f"  BIN3 price        = ${BIN3_price:.0f}   (Pareto-acceptable upper)",
+        f"  R8 threshold      = ${R8_threshold:.0f}   (= MIDPOINT * 1.10)",
         "",
         "  R8 fires (AGREE) ONLY when the seller's offered price is",
         f"  numerically <= ${R8_threshold:.0f}. If seller says any higher number,",
