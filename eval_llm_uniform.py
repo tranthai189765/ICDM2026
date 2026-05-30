@@ -168,12 +168,10 @@ R2. TURN 2 — ADAPTIVE BRANCH (this is the most important rule):
 
 R3. TURN 3 — CLOSING DECISION (this is the second most important rule):
     Let X = seller's most recent offered price.
-    Let BIN1 = buyer_target + 0.2 * range, BIN2 = buyer_target + 0.4 * range.
-    Let MIDPOINT = (buyer_target + seller_listed) / 2.
-    - If X <= BIN1: AGREE  (rare but ideal — you got bin 1 or better).
-    - If BIN1 < X <= MIDPOINT * 1.05: AGREE  (Pareto-acceptable close;
-      contributes meaningfully to r_deal and r_fair).
-    - If X > MIDPOINT * 1.05: `walk_away`  (preserve current anchor).
+    Use the pre-computed BIN1, BIN2, MIDPOINT values from above.
+    - If X <= MIDPOINT: AGREE  (R8 likely already fired; this is backup).
+    - If X > MIDPOINT: `walk_away`  (preserve current anchor;
+      DO NOT agree above midpoint, the deal would land at sl < 0.5).
 
 R4. NEVER agree at a price strictly above BIN2. Above bin 2 the deal
     gives r_gain < 0.6 AND r_fair < 0.4 BOTH simultaneously — strictly
@@ -201,20 +199,29 @@ R7. FORBIDDEN ACTIONS (treat these as Pareto-dominated, never select):
 
 R8. EARLY-CLOSE OPPORTUNISM (CRITICAL — this rule decides r_deal):
     At ANY turn t >= 1 (NOT just the final turn), evaluate the seller's
-    most recent offer X. Compute MIDPOINT = (buyer_target + seller_listed) / 2.
+    most recent offer X.
 
-    - If X <= MIDPOINT * 1.05  (within 5% of midpoint or below):
-      AGREE IMMEDIATELY on this turn. Do NOT counter further.
+    - If X <= MIDPOINT  (STRICTLY at or below midpoint; use the
+      pre-computed MIDPOINT value from the 'Pre-computed Decision
+      Thresholds' section above): AGREE IMMEDIATELY on this turn.
+      Do NOT counter further.
 
-    Reason: r_deal is measured as the MEAN of deal_rate over all turns
-    of the episode. A deal closing at turn 2 contributes 0.5 to r_deal
-    mean; a deal closing at turn 4 contributes only 0.25. Closing EARLY
-    at a Pareto-acceptable price triples r_deal compared to a late close.
+    - If X > MIDPOINT (even by a single dollar): R8 does NOT fire.
+      Fall through to R1-R3.
 
-    AVOID the trap of squeezing for an extra 5% r_gain over 2 more turns
-    -- the avg_turn penalty plus the r_deal dilution outweigh the gain.
+    THRESHOLD IS STRICT: the pre-computed MIDPOINT number is your line.
+    Do NOT 'agree' on prices above midpoint thinking they are 'close
+    enough' -- those close at sl_ratio < 0.5 and drag r_gain DOWN below
+    PADPP. The earlier failure mode (4 of 12 closes at sl < 0.4) was
+    caused by treating 'compromise' offers above midpoint as Pareto-
+    acceptable. They are NOT.
 
-    R8 takes precedence over R1, R2, R3 when triggered.
+    Reason for early close: r_deal is the MEAN of deal_rate over all
+    turns. Closing at turn 2 contributes 0.5 to r_deal mean vs 0.25 at
+    turn 4. Trading 1 turn of bin-1 anchor (-0.2 r_gain) for an early
+    close at midpoint (+0.25 r_deal +0.3 r_fair) is a net win.
+
+    R8 takes precedence over R1-R3 when triggered.
 
 ### Seller simulator pattern (CRITICAL — internalise this for R2)
 - ~50% of sellers are STUBBORN: they repeat their first counter price
@@ -552,6 +559,12 @@ def llm_select_action_uniform(state, weight, action_mapping, objective_names,
     if include_pareto_hint:
         sections += ["", build_pareto_hint(scenario_name)]
 
+    # Pre-compute decision thresholds so the LLM does NOT have to do math.
+    price_range = seller_price - buyer_price
+    BIN1_price = buyer_price + 0.2 * price_range
+    BIN2_price = buyer_price + 0.4 * price_range
+    R8_threshold = mid_price  # strict midpoint — agree only at or below
+
     sections += [
         "",
         "## Task Background",
@@ -559,6 +572,15 @@ def llm_select_action_uniform(state, weight, action_mapping, objective_names,
         f"Seller's listed price: ${seller_price}  (highest realistic)",
         f"Your target price:    ${buyer_price}  (lowest realistic)",
         f"Midpoint price:       ${mid_price:.0f}  ← Pareto sweet spot",
+        "",
+        "## Pre-computed Decision Thresholds (USE THESE EXACT NUMBERS)",
+        f"  BIN1 price       = ${BIN1_price:.0f}   (your low anchor)",
+        f"  BIN2 price       = ${BIN2_price:.0f}   (escalation target)",
+        f"  MIDPOINT (= R8 threshold) = ${R8_threshold:.0f}",
+        "",
+        "  R8 fires (AGREE) ONLY when the seller's offered price is",
+        f"  numerically <= ${R8_threshold:.0f}. If seller says any higher number,",
+        "  R8 does NOT apply -- DO NOT use 'agree'.",
         "",
         "## Dialogue So Far",
         _format_history(state),
