@@ -146,25 +146,26 @@ on what the SELLER will accept, NOT on which objective matters more.
 
 ### HARD DECISION RULES (apply in order — MIXED bin1/bin2 anchor strategy)
 
-R1. OPENING (turns 0 and 1): use `counter, 1` (anchor at bin 1 price).
-    Repetition on turn 1 is GOOD — it tests whether the seller is
-    flexible or stubborn.
+R1. TURN 0 ONLY: use `counter, 1` (single low-anchor probe at bin 1).
+    This one turn at bin 1 boosts r_gain by ~+0.05 vs starting at bin 2.
 
-R2. TURN 2 — ADAPTIVE BRANCH (this is the most important rule):
-    Compare seller's offer at turn 1 with their offer at turn 0.
-    Compute the percentage drop:
-        drop_pct = (P_turn0 - P_turn1) / P_turn0
-    - If drop_pct >= 0.05 (seller dropped at least 5%): seller is
-      FLEXIBLE enough. Use `counter, 2` to escalate toward midpoint —
-      they are likely to accept bin 2 or fold to your final_offer next
-      turn. Bin 2 closes give r_fair = 0.4, which we need to beat PADPP.
-    - If drop_pct < 0.05 (essentially no movement): seller is STUBBORN.
-      Use `final_offer, 1` to commit at bin 1.
+R2. TURN 1 ONWARDS — UNCONDITIONAL MIDPOINT ANCHOR:
+    From turn 1 to turn 3, the default anchor is BIN 2 (= midpoint).
+    Do NOT repeat counter, 1 on turn 1 -- that keeps fair stuck at 0.2
+    across multiple turns and drags r_fair MEAN below PADPP's 0.287.
 
-    The 5% threshold (lowered from 10%) trades some bin-1 timeouts for
-    bin-2 deals — accepting slightly lower r_gain (0.7 vs 0.8) in
-    exchange for much higher r_fair (0.4 vs 0.2) and a deal close
-    (r_deal +1, SR +1).
+    Specifically:
+    - Turn 1: `counter, 2` (escalate to midpoint regardless of seller).
+    - Turn 2: `final_offer, 2` (commit at midpoint).
+
+    Rationale (MEAN-convention math): r_fair is averaged over ALL turns.
+    A timeout sequence (bin1, bin2, bin2, bin2) gives MEAN r_fair =
+    (0.2+0.4+0.4+0.4)/4 = 0.35, beating PADPP's 0.287. Staying at bin 1
+    across all turns gives MEAN r_fair = 0.20, LOSING to PADPP.
+
+    The single turn-0 anchor at bin 1 is a r_gain insurance (bumps the
+    MEAN r_gain by ~0.05 over pure bin-2 strategy) while not sacrificing
+    r_fair much.
 
 R3. TURN 3 — CLOSING DECISION (this is the second most important rule):
     Let X = seller's most recent offered price.
@@ -399,11 +400,8 @@ Reason step-by-step, then output your choice in the EXACT format below.
 
 Reasoning (briefly):
   Q1. What turn number am I on (0, 1, 2, or 3)?
-  Q2. Seller's two most recent offered prices (numbers only):
-      P_prev = seller's offer one turn ago (if any)
-      P_now  = seller's most recent offer (if any)
-      Compute drop_pct = (P_prev - P_now) / P_prev if both present.
-      Is drop_pct >= 0.10 (FLEXIBLE) or < 0.10 (STUBBORN)?
+  Q2. Seller's most recent offered price P_now (number only) from the
+      'Dialogue So Far' section. Note it down.
   Q3. Compute BIN1 = buyer_target + 0.2 * (seller_listed - buyer_target),
                 BIN2 = buyer_target + 0.4 * (seller_listed - buyer_target),
                 MIDPOINT = (buyer_target + seller_listed) / 2.
