@@ -152,14 +152,19 @@ R1. OPENING (turns 0 and 1): use `counter, 1` (anchor at bin 1 price).
 
 R2. TURN 2 — ADAPTIVE BRANCH (this is the most important rule):
     Compare seller's offer at turn 1 with their offer at turn 0.
-    - If seller's turn-1 offer < seller's turn-0 offer (seller MOVED DOWN,
-      they are FLEXIBLE): use `counter, 2` to escalate toward midpoint.
-      Flexible sellers will likely accept bin 2 next turn — closes at
-      r_gain=0.6, r_fair=0.4.
-    - If seller's turn-1 offer >= turn-0 offer (seller STUBBORN, repeats
-      the same number): use `final_offer, 1` to commit at bin 1.
-      Stubborn sellers will not move — timeout at bin 1 preserves
-      r_gain=0.8, r_fair=0.2.
+    Compute the percentage drop:
+        drop_pct = (P_turn0 - P_turn1) / P_turn0
+    - If drop_pct >= 0.10 (seller dropped at least 10%): seller is
+      genuinely FLEXIBLE. Use `counter, 2` to escalate toward midpoint —
+      they are very likely to accept bin 2 next turn.
+    - If drop_pct < 0.10 (token movement, e.g. $1400 -> $1390, or no
+      movement at all): seller is STUBBORN. Use `final_offer, 1` to
+      commit at bin 1. Stubborn sellers will not move further — timeout
+      at bin 1 preserves r_gain = 0.8, r_fair = 0.2.
+
+    The 10% threshold is critical: a 1-2% token drop is just noise and
+    escalating wastes 0.2 of r_gain for nothing. Be CONSERVATIVE about
+    detecting flexibility.
 
 R3. TURN 3 — CLOSING DECISION (this is the second most important rule):
     Let X = seller's most recent offered price.
@@ -375,7 +380,8 @@ Reasoning (briefly):
   Q2. Seller's two most recent offered prices (numbers only):
       P_prev = seller's offer one turn ago (if any)
       P_now  = seller's most recent offer (if any)
-      Is P_now < P_prev (seller flexible) or P_now >= P_prev (stubborn)?
+      Compute drop_pct = (P_prev - P_now) / P_prev if both present.
+      Is drop_pct >= 0.10 (FLEXIBLE) or < 0.10 (STUBBORN)?
   Q3. Compute BIN1 = buyer_target + 0.2 * (seller_listed - buyer_target)
                 and BIN2 = buyer_target + 0.4 * (seller_listed - buyer_target).
       Where is P_now relative to BIN1 and BIN2?

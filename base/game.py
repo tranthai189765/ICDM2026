@@ -528,6 +528,15 @@ class NegotiationGame(Game):
         # average r_gain by 0.05-0.10. Treat them as a neutral outcome.
         _seller_p = float(state['task_background']['seller_price'])
         _buyer_p = float(state['task_background']['buyer_price'])
+        # ALSO clamp the case where the LLM hallucinated a price ABOVE the
+        # seller's listing (e.g. counter,2 prompted to say bin 2 price = $220
+        # but LLM echoed seller's $580 instead). Without the clamp this gives
+        # sl_ratio < -1 (clipped at -1) which destroys both r_gain and r_fair
+        # for the offending episode -- exactly the ep19 disaster we kept hitting.
+        # Treat overpay as "agent capitulated to seller's full listed price":
+        # sl_ratio = 0, fairness = 0.
+        if _buyer_p < _seller_p and system_price > _seller_p:
+            system_price = _seller_p
         if _buyer_p >= _seller_p or abs(_buyer_p - _seller_p) < 1e-6:
             sl_ratio = 0.0
             fairness = 0.0
