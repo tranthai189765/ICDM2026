@@ -182,9 +182,16 @@ R6. WALK_AWAY only fires per R3 turn-3 walk_away clause. Do NOT walk
     away earlier — every turn at bin 1 strengthens your r_gain timeout
     fallback.
 
-R7. AVOID `inquire`, `affirm`, `confirm`, `greet`, `deny`, `inform` at
-    EVERY turn. They neither move price nor close. They strictly waste
-    a turn on the avg_turn penalty.
+R7. FORBIDDEN ACTIONS (treat these as Pareto-dominated, never select):
+    `inquire`, `affirm`, `confirm`, `greet`, `deny`, `inform`,
+    `disagree`, `counter-noprice`.
+
+    These actions do NOT commit to a price AND do NOT close the deal.
+    Worse, your utterance for them often references the seller's last
+    quoted number ('I won't pay $X'), which the game engine attributes
+    to YOU and destroys your r_gain. Choose ONLY from the price-
+    committing actions: `propose`, `counter`, `final_offer`, `agree`,
+    or the terminal action `walk_away`.
 
 ### Seller simulator pattern (CRITICAL — internalise this for R2)
 - ~50% of sellers are STUBBORN: they repeat their first counter price

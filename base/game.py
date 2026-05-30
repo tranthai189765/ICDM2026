@@ -484,17 +484,19 @@ class NegotiationGame(Game):
         # extracting the price proposed by the system
         system_prices = re.findall(r"[-+]?\d*\.?\d+", system_response.replace(",", ""))
 
-        # If the current agent utterance has NO numeric price (inquire, inform,
-        # walk_away, disagree, greet, affirm, deny, confirm, counter-noprice
-        # all routinely emit price-free utterances under their generation
-        # prompts), fall back to the agent's MOST RECENT previously-committed
-        # price from earlier assistant turns. Without this, choosing a non-
-        # price action like 'inquire' after several good anchors collapses
-        # system_price to seller_price and destroys the r_gain metric.
-        if len(system_prices) == 0:
-            system_price = None
-            # dialogue_context: [..., last_assistant, last_user]; scan backwards
-            # over previous assistant turns to find the last numeric anchor.
+        # Resolve action strategy for non-tuple actions.
+        _strategy = action[0] if isinstance(action, tuple) else action
+
+        # Only PRICE-COMMITTING actions credit the current utterance's price
+        # as the system anchor. For all other actions, the number that
+        # appears in the utterance is REFERENTIAL (e.g. agent says
+        # "I won't pay $1300" — $1300 is the seller's offer being rejected,
+        # NOT a new commitment). Crediting referential numbers destroys the
+        # r_gain measurement by ~0.2 on average. For non-committing actions
+        # we always fall back to the agent's MOST RECENT real anchor.
+        _PRICE_COMMITTING = {'propose', 'counter', 'final_offer', 'agree'}
+
+        def _scan_prior_anchor():
             for prev_turn in reversed(state['dialogue_context'][:-2]):
                 if prev_turn.get('role') == 'assistant':
                     prev_prices = re.findall(
@@ -502,27 +504,18 @@ class NegotiationGame(Game):
                         (prev_turn.get('content') or '').replace(",", "")
                     )
                     if prev_prices:
-                        system_price = max(prev_prices)
-                        break
-            if system_price is None:
-                # No prior anchor at all (turn 0 with a non-price action) →
-                # treat as seller-favorable null outcome.
-                system_price = state['task_background']['seller_price']
-        elif action != "inform":
+                        return max(prev_prices)
+            return None
+
+        if _strategy in _PRICE_COMMITTING and len(system_prices) > 0:
+            # Real commitment: trust the current utterance's price.
             system_price = max(system_prices)
         else:
-            # 'inform' that DOES mention a price (e.g. market reference) — be
-            # cautious: don't credit that as an anchor, use prior real anchor.
-            system_price = None
-            for prev_turn in reversed(state['dialogue_context'][:-2]):
-                if prev_turn.get('role') == 'assistant':
-                    prev_prices = re.findall(
-                        r"[-+]?\d*\.?\d+",
-                        (prev_turn.get('content') or '').replace(",", "")
-                    )
-                    if prev_prices:
-                        system_price = max(prev_prices)
-                        break
+            # Non-committing action (deny, disagree, inquire, walk_away,
+            # inform, affirm, greet, confirm, counter-noprice) OR price-
+            # committing action with no extractable price (LLM forgot the
+            # number). Use the most recent real anchor.
+            system_price = _scan_prior_anchor()
             if system_price is None:
                 system_price = state['task_background']['seller_price']
 
