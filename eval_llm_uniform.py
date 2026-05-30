@@ -146,31 +146,31 @@ on what the SELLER will accept, NOT on which objective matters more.
 
 ### HARD DECISION RULES (apply in order — MIXED bin1/bin2 anchor strategy)
 
-R1. TURN 0 ONLY: use `counter, 1` (single low-anchor probe at bin 1).
-    This one turn at bin 1 boosts r_gain by ~+0.05 vs starting at bin 2.
+R1. OPENING (turns 0 and 1): use `counter, 1` (anchor at bin 1 price).
+    Repetition on turn 1 is GOOD — it tests whether the seller is
+    flexible or stubborn, AND keeps r_gain high if the seller refuses.
 
-R2. TURN 1 ONWARDS — UNCONDITIONAL MIDPOINT ANCHOR:
-    From turn 1 to turn 3, the default anchor is BIN 2 (= midpoint).
-    Do NOT repeat counter, 1 on turn 1 -- that keeps fair stuck at 0.2
-    across multiple turns and drags r_fair MEAN below PADPP's 0.287.
+R2. TURN 2 — ADAPTIVE BRANCH (this is the most important rule):
+    Compare seller's offer at turn 1 with their offer at turn 0.
+    Compute the percentage drop:
+        drop_pct = (P_turn0 - P_turn1) / P_turn0
+    - If drop_pct >= 0.05 (seller dropped at least 5%): seller is
+      FLEXIBLE enough. Use `counter, 2` to escalate toward midpoint —
+      they are likely to fold to your final_offer next turn. Bin 2
+      closes give r_fair = 0.4.
+    - If drop_pct < 0.05 (essentially no movement): seller is STUBBORN.
+      Use `final_offer, 1` to commit at bin 1.
 
-    Specifically:
-    - Turn 1: `counter, 2` (escalate to midpoint regardless of seller).
-    - Turn 2: `final_offer, 2` (commit at midpoint).
-
-    Rationale (MEAN-convention math): r_fair is averaged over ALL turns.
-    A timeout sequence (bin1, bin2, bin2, bin2) gives MEAN r_fair =
-    (0.2+0.4+0.4+0.4)/4 = 0.35, beating PADPP's 0.287. Staying at bin 1
-    across all turns gives MEAN r_fair = 0.20, LOSING to PADPP.
-
-    The single turn-0 anchor at bin 1 is a r_gain insurance (bumps the
-    MEAN r_gain by ~0.05 over pure bin-2 strategy) while not sacrificing
-    r_fair much.
+    The 5% threshold trades some bin-1 timeouts for bin-2 deals.
+    NEVER unconditionally escalate to bin 2 on turn 1 — empirical runs
+    showed this drops r_gain by ~0.25 and r_fair by ~0.06 because the
+    agent then agrees too eagerly to seller offers near midpoint that
+    are actually slightly above midpoint (sl < 0.5 closes).
 
 R3. TURN 3 — CLOSING DECISION (this is the second most important rule):
     Let X = seller's most recent offered price.
     Use the pre-computed thresholds from above.
-    - If X <= R8 threshold (= MIDPOINT * 1.10): AGREE  (R8 likely
+    - If X <= R8 threshold (= MIDPOINT * 1.05): AGREE  (R8 likely
       already fired; this is the safety net).
     - If X > R8 threshold: `walk_away`  (preserve current anchor).
 
@@ -202,16 +202,15 @@ R8. EARLY-CLOSE OPPORTUNISM (CRITICAL — this rule decides r_deal/SR):
     At ANY turn t >= 1 (NOT just the final turn), evaluate the seller's
     most recent offer X.
 
-    - If X <= R8 threshold (pre-computed = MIDPOINT * 1.10, shown in
+    - If X <= R8 threshold (pre-computed = MIDPOINT * 1.05, shown in
       'Pre-computed Decision Thresholds' section): AGREE IMMEDIATELY
       on this turn. Do NOT counter further.
 
     - If X > R8 threshold: R8 does NOT fire. Fall through to R1-R3.
 
     THRESHOLD IS STRICT: compare seller's offer NUMERICALLY to the
-    pre-printed R8 threshold dollar amount. The threshold extends just
-    slightly above midpoint to allow bin-3 closes (sl ~ 0.4, fair ~ 0.4
-    = max r_fair), without admitting the bad sl<0.4 closes we saw before.
+    pre-printed R8 threshold dollar amount. *1.05 is only a 5% buffer —
+    do NOT treat 10%+ above midpoint as 'close enough'.
 
     Reason for early close: r_deal is the MEAN of deal_rate over all
     turns. Closing at turn 2 contributes 0.5 to r_deal mean vs 0.25 at
@@ -400,8 +399,11 @@ Reason step-by-step, then output your choice in the EXACT format below.
 
 Reasoning (briefly):
   Q1. What turn number am I on (0, 1, 2, or 3)?
-  Q2. Seller's most recent offered price P_now (number only) from the
-      'Dialogue So Far' section. Note it down.
+  Q2. Seller's two most recent offered prices (numbers only):
+      P_prev = seller's offer one turn ago (if any)
+      P_now  = seller's most recent offer (if any)
+      Compute drop_pct = (P_prev - P_now) / P_prev if both present.
+      Is drop_pct >= 0.05 (FLEXIBLE) or < 0.05 (STUBBORN)?
   Q3. Compute BIN1 = buyer_target + 0.2 * (seller_listed - buyer_target),
                 BIN2 = buyer_target + 0.4 * (seller_listed - buyer_target),
                 MIDPOINT = (buyer_target + seller_listed) / 2.
@@ -559,10 +561,10 @@ def llm_select_action_uniform(state, weight, action_mapping, objective_names,
     BIN1_price = buyer_price + 0.2 * price_range
     BIN2_price = buyer_price + 0.4 * price_range
     BIN3_price = buyer_price + 0.6 * price_range
-    # R8 threshold: midpoint * 1.10 ≈ BIN3 price. This allows close at
-    # bin 3 (r_fair = 0.4 max) while excluding offers > 20% above midpoint
-    # (which previously caused bad sl=0.2-0.3 closes).
-    R8_threshold = mid_price * 1.10
+    # R8 threshold: midpoint * 1.05. Tight enough to exclude bad sl<0.5
+    # closes; loose enough to allow Pareto-acceptable bin-2.5 closes
+    # (sl~0.45, fair~0.45).
+    R8_threshold = mid_price * 1.05
 
     sections += [
         "",
@@ -576,7 +578,7 @@ def llm_select_action_uniform(state, weight, action_mapping, objective_names,
         f"  BIN1 price        = ${BIN1_price:.0f}   (your low anchor)",
         f"  BIN2 price        = ${BIN2_price:.0f}   (escalation target)",
         f"  BIN3 price        = ${BIN3_price:.0f}   (Pareto-acceptable upper)",
-        f"  R8 threshold      = ${R8_threshold:.0f}   (= MIDPOINT * 1.10)",
+        f"  R8 threshold      = ${R8_threshold:.0f}   (= MIDPOINT * 1.05)",
         "",
         "  R8 fires (AGREE) ONLY when the seller's offered price is",
         f"  numerically <= ${R8_threshold:.0f}. If seller says any higher number,",
