@@ -298,18 +298,17 @@ class DMORLTrainer(PADPPTrainer):
         # weight (no random-weight branch). With a single uniform advanced skill
         # [1/3, 1/3, 1/3] this matches PADPP Table 2's Uniform row exactly.
         #
-        # GPI teacher forcing: set _gpi_skill_envelope so predict() (rollout
-        # action selection) and train_rl_step() (Q2 target convex envelope +
-        # sampled_preferences for Q1) both use the Phase 1a basic skills
-        # [1,0,0], [0,1,0], [0,0,1] plus the advanced skill as the envelope.
+        # GPI teacher forcing: set _gpi_skill_envelope to the Phase 1a basic
+        # skill weights only ([1,0,0], [0,1,0], [0,0,1]). predict() (rollout
+        # action selection) and train_rl_step() (Q2 envelope + Q1 preferences)
+        # will both use these as the GPI teachers. The advanced skill is the
+        # student — it should not appear in the envelope.
         basic_skills = self.dmorl_controller.skill_library.basic_skills
-        envelope_weights = (
-            [s["weight_vector"] for s in basic_skills]
-            + [s["weight_vector"] for s in advanced_skills]
-        )
+        envelope_weights = [s["weight_vector"] for s in basic_skills]
         self._gpi_skill_envelope = torch.FloatTensor(envelope_weights).to(self.device)
         loguru_logger.info(
-            f"[DMORL Phase-1b] GPI teacher forcing envelope = {envelope_weights}"
+            f"[DMORL Phase-1b] GPI teacher forcing envelope (basic skills only) "
+            f"= {envelope_weights}"
         )
 
         try:
