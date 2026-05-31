@@ -186,6 +186,49 @@ class DMORLTrainer(PADPPTrainer):
         self.q_old_network = None
         self.W_converged = []          # list[ list[float] ]
 
+        # Phase 1 anchor sampling: when set, train_rl_step samples loss
+        # preferences from these basic-skill weights with replacement instead
+        # of the PADPP default random Dirichlet.
+        self._phase1_basic_weights_np = None     # np.ndarray [K, n_obj] or None
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Override: Phase 1 loss preference source = 7 basic anchors (Option B)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def train_rl_step(self, buffer, action_mapping, optimizer, scheduler):
+        """
+        Thin wrapper around PADPP train_rl_step. If self._phase1_basic_weights_np
+        is set (Phase 1 active), the module-level `random_weights` in
+        padpp.trainer is swapped for a sampler that draws from the 7 basic
+        skill weights with replacement. This makes Q train *only* at the
+        anchor preferences during Phase 1, matching the Option-B design:
+
+          sampled_preferences = random.choice(basic_weights, k=n_preferences)
+
+        Outside Phase 1 (Phase 2 or any other caller) we fall through to the
+        unmodified PADPP behaviour.
+        """
+        basic = self._phase1_basic_weights_np
+        if basic is None:
+            return super().train_rl_step(buffer, action_mapping, optimizer, scheduler)
+
+        import padpp.trainer as _padpp_trainer
+        _orig_random_weights = _padpp_trainer.random_weights
+
+        def _basic_sampler(dim, n=1, dist="dirichlet", seed=None, rng=None, p=0.01):
+            # Draw `n` preferences from the basic anchors with replacement.
+            idx = np.random.randint(0, len(basic), size=n)
+            samples = [basic[i].tolist() for i in idx]
+            if n == 1:
+                return samples[0]
+            return samples
+
+        _padpp_trainer.random_weights = _basic_sampler
+        try:
+            return super().train_rl_step(buffer, action_mapping, optimizer, scheduler)
+        finally:
+            _padpp_trainer.random_weights = _orig_random_weights
+
     # ═════════════════════════════════════════════════════════════════════════
     # PHASE 1 — Basic Skill Curriculum (Anchor Pre-training)
     # ═════════════════════════════════════════════════════════════════════════
@@ -224,6 +267,11 @@ class DMORLTrainer(PADPPTrainer):
         original_use_gpi = self.model_config.use_gpi
         self.model_config.use_gpi = False
 
+        # Option B: loss preferences for Phase 1 are sampled with replacement
+        # from the 7 basic anchors (not random Dirichlet). The overridden
+        # train_rl_step picks this up via self._phase1_basic_weights_np.
+        self._phase1_basic_weights_np = basic_weights.astype(np.float32)
+
         try:
             self._run_curriculum_rlt(
                 cases, device, simulators, action_mapping,
@@ -233,6 +281,7 @@ class DMORLTrainer(PADPPTrainer):
         finally:
             self.model_config.num_train_rl_epochs = original_epochs
             self.model_config.use_gpi = original_use_gpi
+            self._phase1_basic_weights_np = None
 
         loguru_logger.info("[DMORL Phase-1] Anchor curriculum training complete (self-learning only, no GPI).")
 

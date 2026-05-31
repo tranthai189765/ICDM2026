@@ -103,7 +103,12 @@ Pre-train Q at **7 anchor preferences** that span the simplex:
 
 Each episode samples one anchor uniformly. The Q-network update uses the
 **PI (Policy Improvement) branch** of PADPP — i.e. **pure self-learning, no
-GPI envelope, no teacher forcing**:
+GPI envelope, no teacher forcing**. To anchor Q firmly at the 7 basics
+(rather than generalising across the whole simplex, which is Phase 2's job),
+the inner loss samples its `n_preferences = 128` training preferences **with
+replacement from the 7 anchors only** (not from a random Dirichlet over the
+simplex). This is implemented as a runtime swap of `random_weights` inside
+`train_rl_step` during Phase 1 — `padpp/trainer.py` is unmodified.
 
 $$
 \mathcal{L}_{\text{phase1}}(\theta) \;=\; \mathbb{E}\!\left[\,(w^{\top}(r + \gamma(1-d)\, Q_{\text{target}}(s', a^{\star}_{\text{SF}}, w)) - w^{\top} Q(s, a, w; \theta))^2\,\right]
