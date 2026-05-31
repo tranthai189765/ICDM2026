@@ -1,4 +1,4 @@
-# DMORL config for Negotiation scenario
+# DMORL config for Negotiation scenario (R-PADPP variant)
 tokenizer: roberta-large
 plm: roberta-large
 lm_size: 1024
@@ -25,16 +25,26 @@ objective_embedding_size: 6
 num_train_q_network_epochs: 20
 buffer_length: 2000
 warmup_steps: 30
-# ── DMORL-specific ──────────────────────────────────────────────────────────
-n_basic_skills: 3
-n_advanced_skills: 1
-n_skill_train_epochs: 15
-n_advanced_train_epochs: 15
-use_dynamic_weight: true
-dynamic_weight_horizon: 3
-use_hints: true
-hints_file: "dmorl_hints_neg.json"
+
+# ── Phase 1: Basic skill curriculum ─────────────────────────────────────────
+n_basic_skills: 7                    # 3 corners + 1 uniform + 3 edge midpoints
+n_skill_train_epochs: 15             # RL epochs over the centralized basic skill mix
+phase1_eval_episodes: 3              # Eval dialogues per skill after Phase 1
 skills_file: "dmorl_skills_neg.json"
 run_curriculum: true
-force_rediscover_skills: false   # Use hand-crafted dmorl_skills_neg.json for paper comparison
+force_rediscover_skills: false       # Use hand-crafted JSON anchors
+
+# ── Phase 2: R-PADPP (Regret-Gated GPI) ─────────────────────────────────────
+n_rpadpp_epochs: 30                  # RL epochs of regret-gated training
+epsilon_threshold: 0.05              # Regret threshold for adding w to W_converged
+q_old_update_freq: 1                 # Update Q_old every K RL epochs
+regret_batch_size: 64                # State batch for regret estimation
+n_candidate_w: 32                    # New random w's to evaluate per epoch
+use_active_sampling: false           # If true, rollout under highest-regret w
+alpha_rpadpp: 0.5                    # Weight: L = (1-α)·L_self + α·L_know
+
+# ── Common ──────────────────────────────────────────────────────────────────
+hints_file: "dmorl_hints_neg.json"
+use_dynamic_weight: false
+use_hints: false
 saved_dir: "checkpoints/dmorl_neg"

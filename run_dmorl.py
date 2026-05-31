@@ -38,23 +38,32 @@ Usage examples:
       --n_basic_skills 5 \
       --n_advanced_skills 5
 
-  # ── Phase 1a debug test (fast, negotiation, no Phase 1b/2) ──────────────────
-  # Run this first to verify the curriculum loop works end-to-end on the server.
-  # Checkpoint is saved to checkpoints/.../dmorl_phase1a.pth automatically.
-  # Eval dialogues are written to debug_output/eval_dialogues_<timestamp>/.
+  # ── R-PADPP Phase 1 only (anchor curriculum + Table 2 eval) ────────────────
   python run_dmorl.py \
       --scenario negotiation \
       --datasets craigslist_bargain \
       --models dmorl \
-      --gen_models chatgpt \
+      --gen_models fpt --model_type fpt \
       --metrics sr,deal_rate,sl_ratio,fairness,avg_turn \
       --loggers terminal,file \
-      --n_basic_skills 2 \
-      --n_skill_train_epochs 3 \
-      --num_train_rl_epochs 3 \
+      --n_basic_skills 7 \
+      --n_skill_train_epochs 15 \
       --run_curriculum \
-      --no_dynamic_weight \
-      --phase1a_only \
+      --phase1_only \
+      --debug
+
+  # ── R-PADPP Phase 2 only (load Phase 1 checkpoint, run regret-gated GPI) ───
+  python run_dmorl.py \
+      --scenario negotiation \
+      --datasets craigslist_bargain \
+      --models dmorl \
+      --gen_models fpt --model_type fpt \
+      --metrics sr,deal_rate,sl_ratio,fairness,avg_turn \
+      --loggers terminal,file \
+      --n_rpadpp_epochs 30 \
+      --epsilon_threshold 0.05 \
+      --alpha_rpadpp 0.5 \
+      --phase2_only \
       --debug
 """
 
@@ -126,12 +135,18 @@ def parse_dmorl_args():
     dmorl_parser.add_argument('--run_curriculum', action='store_true', default=None)
     dmorl_parser.add_argument('--no_curriculum', dest='run_curriculum', action='store_false')
     dmorl_parser.add_argument('--force_rediscover_skills', action='store_true')
-    dmorl_parser.add_argument('--phase1a_only', action='store_true', default=False,
-                               help='Stop after Phase 1a and save checkpoint (for isolated testing)')
-    dmorl_parser.add_argument('--phase1b_only', action='store_true', default=False,
-                               help='Skip SFT + Phase 1a (load dmorl_phase1a.pth), run Phase 1b only, then online eval')
-    dmorl_parser.add_argument('--skip_phase2', action='store_true', default=False,
-                               help='Skip Phase 2 (full PADPP RLT generalisation) after Phase 1b')
+    dmorl_parser.add_argument('--phase1_only', action='store_true', default=False,
+                               help='Stop after Phase 1 anchor curriculum (save dmorl_phase1.pth and eval Table 2)')
+    dmorl_parser.add_argument('--phase2_only', action='store_true', default=False,
+                               help='Skip SFT + Phase 1 (load dmorl_phase1.pth), run R-PADPP Phase 2 only')
+    dmorl_parser.add_argument('--n_rpadpp_epochs', type=int, default=None,
+                               help='Phase 2 RL epoch count override')
+    dmorl_parser.add_argument('--epsilon_threshold', type=float, default=None,
+                               help='Regret threshold for admitting w to W_converged')
+    dmorl_parser.add_argument('--alpha_rpadpp', type=float, default=None,
+                               help='Mixing weight: L = (1-α)·L_self + α·L_know')
+    dmorl_parser.add_argument('--use_active_sampling', action='store_true', default=None,
+                               help='Pick highest-regret candidate w for rollout each epoch')
     dmorl_parser.add_argument('--debug', action='store_true', default=False,
                                help='Print LLM prompts/outputs, per-step rewards/losses, save eval dialogues')
     dmorl_parser.add_argument('--debug_output_dir', type=str, default=None,
@@ -271,15 +286,14 @@ if __name__ == '__main__':
                     dmorl_params['run_sft'] = False
                 if dmorl_overrides.get('skip_offline_eval'):
                     dmorl_params['run_offline_eval'] = False
-                # --phase1b_only: skip SFT + offline eval + Phase 1a, then load
-                # dmorl_phase1a.pth and run Phase 1b. Implies --skip_phase2.
-                if dmorl_overrides.get('phase1b_only'):
+                # --phase1_only: stop after Phase 1
+                if dmorl_overrides.get('phase1_only'):
+                    dmorl_params['phase1_only'] = True
+                # --phase2_only: skip SFT + Phase 1, load dmorl_phase1.pth, run R-PADPP
+                if dmorl_overrides.get('phase2_only'):
                     dmorl_params['run_sft'] = False
                     dmorl_params['run_offline_eval'] = False
-                    dmorl_params['phase1b_only'] = True
-                    dmorl_params['skip_phase2'] = True
-                if dmorl_overrides.get('skip_phase2'):
-                    dmorl_params['skip_phase2'] = True
+                    dmorl_params['phase2_only'] = True
                 model_config.set_params(dmorl_params)
 
             model = model_class(model_config)

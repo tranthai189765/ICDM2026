@@ -1,6 +1,6 @@
 """
-DMORL Configuration classes.
-Extends PADPPConfig with DMORL-specific hyper-parameters.
+DMORL Configuration classes (R-PADPP variant).
+Extends PADPPConfig with R-PADPP-specific hyper-parameters.
 """
 
 from padpp.config import (
@@ -17,32 +17,36 @@ from config.constants import (
 
 
 class DMORLConfig(PADPPConfig):
-    # ── DMORL Phase-1 hyper-parameters ────────────────────────────────────────
-    n_basic_skills = 5                  # N basic skills discovered by LLM
-    n_advanced_skills = 5              # M advanced skills discovered by LLM
-    n_skill_train_epochs = 15          # RL epochs dedicated per basic skill (curriculum)
-    n_advanced_train_epochs = 20       # RL epochs for advanced skill phase
+    # ── Phase 1: Basic skill curriculum ──────────────────────────────────────
+    n_basic_skills = 7                 # 3 corners + 1 uniform + 3 edge midpoints
+    n_skill_train_epochs = 15          # RL epochs over centralized basic-skill mix
+    phase1_eval_episodes = 3           # Eval dialogues per skill after Phase 1
+    skills_file = "dmorl_skills.json"
+    run_curriculum = True
+    force_rediscover_skills = False
+    phase1_only = False                # Stop after Phase 1 (+ Table 2 eval)
+    phase2_only = False                # Load Phase 1 checkpoint, run Phase 2 only
 
-    # ── DMORL Phase-2 hyper-parameters ────────────────────────────────────────
-    use_dynamic_weight = True          # Replace static w with LLM-selected w at inference
-    dynamic_weight_horizon = 3         # T: re-query LLM every T dialogue turns
+    # ── Phase 2: R-PADPP (Regret-Gated GPI) ──────────────────────────────────
+    n_rpadpp_epochs = 30               # RL epochs of regret-gated training
+    epsilon_threshold = 0.05           # Regret threshold for W_converged admission
+    q_old_update_freq = 1              # Update Q_old every K RL epochs
+    regret_batch_size = 64             # State batch size for regret estimation
+    n_candidate_w = 32                 # Random w's drawn per epoch for regret screen
+    use_active_sampling = False        # Rollout under highest-regret w if True
+    alpha_rpadpp = 0.5                 # L = (1-α)·L_self + α·L_know
 
-    # ── DMORL Phase-3 hyper-parameters ────────────────────────────────────────
-    use_hints = True                   # Feed accumulated hints to DynamicWeightController
-    hints_file = "dmorl_hints.json"    # Where to persist hints
-    skills_file = "dmorl_skills.json"  # Where to persist discovered skills
-
-    # Keep full standard PADPP RLT after the curriculum phases
-    run_curriculum = True              # If False, skip phases 1a/1b and go straight to PADPP RLT
-    force_rediscover_skills = True     # Always re-query LLM for skills each run
-    phase1a_only = False               # Stop after Phase 1a (for isolated testing)
-    phase1a_eval_episodes = 3          # Eval dialogues per basic skill after Phase 1a
-    phase1b_only = False               # Load dmorl_phase1a.pth and only run Phase 1b
-    skip_phase2 = False                # Skip Phase 2 (full PADPP RLT generalisation)
+    # ── Legacy DMORL fields kept for compatibility with existing code paths ──
+    n_advanced_skills = 0
+    n_advanced_train_epochs = 0
+    use_dynamic_weight = False
+    dynamic_weight_horizon = 3
+    use_hints = False
+    hints_file = "dmorl_hints.json"
 
     # Debug mode
-    debug = False                      # Print LLM prompts/outputs, per-step rewards/losses
-    debug_output_dir = "debug_output"  # Directory for debug artefacts (eval dialogues, etc.)
+    debug = False
+    debug_output_dir = "debug_output"
 
     def __init__(self, params):
         super().__init__(params)
@@ -66,9 +70,6 @@ class DMORLConfigForNegotiation(DMORLConfig):
     combined_action = True
     special_tokens_dict = neg_special_tokens_dict
     n_topics = 5
-    # Lowered from 5e-4 to 2e-4: with sparse intermediate rewards the loss
-    # signal is weaker per step, and 5e-4 caused loss to plateau at ~0.07
-    # after only 8 epochs (Q overshooting then oscillating).
     actor_learning_rate = 2e-4
     # 3 objectives (PADPP paper convention): sl_ratio, fairness, deal_rate
     obj_to_weight = {

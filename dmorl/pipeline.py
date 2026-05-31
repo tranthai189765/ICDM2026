@@ -1,18 +1,13 @@
 """
-DMORL Pipeline
-Extends PADPP pipelines with the 3-phase DMORL training execution:
-  Phase 1a: Basic-skill curriculum (fixed-weight RLT per skill)
-  Phase 1b: Advanced-skill training (skill-biased RLT)
-  Phase 2:  Full PADPP RLT (random weight sampling, generalisation)
-  Phase 3:  Post-dialogue refinement at inference time
+DMORL Pipeline (R-PADPP).
 
-One concrete pipeline class per scenario (Recommendation, Negotiation,
-EmotionalSupport) mirrors the PADPP structure.
+Two-phase pipeline:
+  Phase 1: Basic-skill anchor curriculum + Table 2 evaluation
+  Phase 2: R-PADPP (regret-gated GPI) training
 """
 
 import os
 import random
-import copy
 import torch
 
 from loguru import logger
@@ -29,45 +24,33 @@ from dmorl.trainer import DMORLTrainer
 from utils.game import create_target_set, create_cases
 from text_gen.bart_generation import BARTGeneration
 
-# Objective name maps per scenario (must match config.constants metric names)
 SCENARIO_OBJECTIVE_NAMES = {
     "recommendation":   ["user_reward", "item_freq"],
     "negotiation":      ["sl_ratio", "fairness", "deal_rate"],
     "emotional_support": ["user_reward", "toxicity", "avg_turn"],
 }
 
-# Short human-readable semantics for each objective, used to ground the LLM
-# during skill discovery (so it understands e.g. that avg_turn is a per-turn
-# PENALTY and a high weight on it means "prefer closing fast").
 OBJECTIVE_DESCRIPTIONS = {
-    # Negotiation (agent acts as the buyer)
-    "sl_ratio":    "Reward in [0, 1]: 1.0 = agent (buyer) secured a very low price; 0.5 = midpoint; 0.0 = paid the seller's full ask. Higher weight => agent is more price-aggressive.",
-    "fairness":    "Reward in [-0.5, 0.5], max 0.5 when the proposed price equals the midpoint between buyer's target and seller's ask. Higher weight => agent prefers equitable mid-range outcomes.",
-    "deal_rate":   "Binary terminal reward, 1.0 if a deal is closed, 0.0 if the conversation times out. Higher weight => agent strongly prefers reaching ANY agreement.",
-    "avg_turn":    "Constant per-turn PENALTY of -0.1 (negative); the longer the dialogue the larger the cumulative penalty. Higher weight => agent strongly prefers closing in fewer turns (urgency).",
-    # Recommendation
-    "user_reward": "User satisfaction with the recommended item (positive = liked).",
-    "item_freq":   "Coverage of the long-tail item space (positive = recommending diverse items).",
-    # Emotional support
-    "toxicity":    "Negative toxicity score; higher weight => agent avoids harmful language.",
+    "sl_ratio":    "Reward in [0, 1]: 1.0 = agent (buyer) secured a very low price; 0.5 = midpoint; 0.0 = paid the seller's full ask.",
+    "fairness":    "Reward in [-0.5, 0.5], max 0.5 when price equals the midpoint between buyer's target and seller's ask.",
+    "deal_rate":   "Binary terminal reward, 1.0 if deal closed, 0.0 if timed out.",
+    "avg_turn":    "Constant per-turn penalty of -0.1.",
+    "user_reward": "User satisfaction with recommended item.",
+    "item_freq":   "Coverage of the long-tail item space.",
+    "toxicity":    "Negative toxicity score.",
 }
 
 
 class DMORLPipeline(PADPPPipeline):
-    """
-    Base DMORL pipeline. Injects the DMORLController into the trainer,
-    runs skill discovery, then executes the 3-phase training.
-    """
+    """R-PADPP pipeline: Phase 1 (anchor curriculum) → Phase 2 (regret-gated GPI)."""
 
     def _init_dmorl_controller(self):
-        """Build and attach a DMORLController to the trainer."""
         scenario = self.game_config.name
         objective_names = SCENARIO_OBJECTIVE_NAMES.get(
             scenario, [f"obj_{i}" for i in range(self.model_config.n_objectives)]
         )
         objective_descriptions = {
-            name: OBJECTIVE_DESCRIPTIONS[name]
-            for name in objective_names if name in OBJECTIVE_DESCRIPTIONS
+            n: OBJECTIVE_DESCRIPTIONS[n] for n in objective_names if n in OBJECTIVE_DESCRIPTIONS
         }
         saved_dir = getattr(self.model_config, "saved_dir", "checkpoints")
         skill_log_file = os.path.join(saved_dir, "skill_discovery.txt")
@@ -77,31 +60,27 @@ class DMORLPipeline(PADPPPipeline):
             objective_descriptions=objective_descriptions,
             scenario=scenario,
             n_basic_skills=self.model_config.n_basic_skills,
-            n_advanced_skills=self.model_config.n_advanced_skills,
-            dynamic_weight_horizon=self.model_config.dynamic_weight_horizon,
+            n_advanced_skills=getattr(self.model_config, "n_advanced_skills", 0),
+            dynamic_weight_horizon=getattr(self.model_config, "dynamic_weight_horizon", 3),
             skills_file=self.model_config.skills_file,
-            hints_file=self.model_config.hints_file,
+            hints_file=getattr(self.model_config, "hints_file", "dmorl_hints.json"),
             skill_log_file=skill_log_file,
         )
-        # Phase 0: Discover skills (loads from file if already done)
         controller.initialize_skills(
             force_rediscover=self.model_config.force_rediscover_skills
         )
-        # Attach skill library to model (enables GPI over skills)
         self.trainer.model.set_skill_library(controller.skill_library)
-        # Attach controller to trainer (enables dynamic weight + hints)
         self.trainer.dmorl_controller = controller
         logger.info("[DMORL] Controller initialised and attached to trainer.")
         return controller
 
     def execute(self):
         """
-        Full DMORL pipeline:
-          SFT → offline eval → Phase 1a → Phase 1b → Phase 2 (PADPP RLT) → online eval
+        Full DMORL R-PADPP pipeline:
+          SFT → offline eval → Phase 1 (anchor curriculum) → Phase 2 (R-PADPP) → online eval
         """
         offline_eval_results, online_eval_results = None, None
 
-        # ── Testing-only mode ────────────────────────────────────────────────
         if self.model_config.test_phase:
             if self.model_config.run_online_eval:
                 self._init_dmorl_controller()
@@ -109,15 +88,12 @@ class DMORLPipeline(PADPPPipeline):
                     self.load_pretrained_model(is_rl=False)
                 else:
                     self.load_pretrained_model(is_rl=True)
-
                 if not isinstance(self.trainer.generation_method, BARTGeneration):
                     self.trainer.generation_method.generation_config.set_params(
-                        {'temperature': 0.0}
-                    )
+                        {'temperature': 0.0})
                 online_eval_results = self.run_online_test()
             return offline_eval_results, online_eval_results
 
-        # ── Full training + evaluation ───────────────────────────────────────
         if self.model_config.run_sft:
             logger.info("[DMORL] Running SFT ...")
             self.run_sft()
@@ -130,60 +106,49 @@ class DMORLPipeline(PADPPPipeline):
 
         if self.model_config.run_rlt:
             self.trainer.global_step = 0
+            phase2_only = getattr(self.model_config, "phase2_only", False)
+            phase1_only = getattr(self.model_config, "phase1_only", False)
 
-            phase1b_only = getattr(self.model_config, "phase1b_only", False)
-
-            if phase1b_only:
-                # Load existing Phase 1a checkpoint and skip Phase 1a entirely.
+            if phase2_only:
                 saved_dir = getattr(self.model_config, "saved_dir", "checkpoints")
-                phase1a_ckpt = os.path.join(saved_dir, "dmorl_phase1a.pth")
-                if not os.path.exists(phase1a_ckpt):
+                phase1_ckpt = os.path.join(saved_dir, "dmorl_phase1.pth")
+                if not os.path.exists(phase1_ckpt):
                     raise FileNotFoundError(
-                        f"[DMORL phase1b_only] Phase 1a checkpoint not found at "
-                        f"{phase1a_ckpt}. Run Phase 1a first or pass --phase1a_only."
+                        f"[DMORL phase2_only] Phase 1 checkpoint not found at "
+                        f"{phase1_ckpt}. Run Phase 1 first."
                     )
-                logger.info(f"[DMORL phase1b_only] Loading Phase 1a checkpoint → {phase1a_ckpt}")
-                self.trainer.load_model(phase1a_ckpt)
+                logger.info(f"[DMORL phase2_only] Loading Phase 1 checkpoint → {phase1_ckpt}")
+                self.trainer.load_model(phase1_ckpt)
                 self.model = self.trainer.model
             else:
                 self.load_pretrained_model(is_rl=False)
 
-            # Phase 0: initialise skill library
+            # Phase 0: build skill library (7 anchors)
             self._init_dmorl_controller()
 
-            if self.model_config.run_curriculum:
-                if not phase1b_only:
-                    logger.info("[DMORL] Phase 1a: Basic skill curriculum ...")
-                    self.run_basic_skills()
+            if self.model_config.run_curriculum and not phase2_only:
+                logger.info("[DMORL] === Phase 1: Anchor Curriculum ===")
+                self.run_phase1()
 
-                    if getattr(self.model_config, "phase1a_only", False):
-                        logger.info("[DMORL] phase1a_only=True — stopping after Phase 1a.")
-                        return offline_eval_results, None
-                else:
-                    logger.info("[DMORL] phase1b_only=True — skipping Phase 1a.")
+                if phase1_only:
+                    logger.info("[DMORL] phase1_only=True — stopping after Phase 1.")
+                    return offline_eval_results, None
 
-                logger.info("[DMORL] Phase 1b: Advanced skill training ...")
-                self.run_advanced_skills()
-
-            if getattr(self.model_config, "skip_phase2", False):
-                logger.info("[DMORL] skip_phase2=True — skipping Phase 2 (PADPP RLT).")
-            else:
-                logger.info("[DMORL] Phase 2: Full PADPP RLT (generalisation) ...")
-                self.run_rlt()
+            logger.info("[DMORL] === Phase 2: R-PADPP ===")
+            self.run_phase2()
 
         if self.model_config.run_online_eval:
-            # If Phase 2 was skipped, eval the Phase 1b checkpoint directly
-            # (rl_model.pth does not exist in that case).
-            if getattr(self.model_config, "skip_phase2", False):
-                saved_dir = getattr(self.model_config, "saved_dir", "checkpoints")
-                phase1b_ckpt = os.path.join(saved_dir, "dmorl_phase1b.pth")
-                if not os.path.exists(phase1b_ckpt):
-                    raise FileNotFoundError(
-                        f"[DMORL] Phase 1b checkpoint not found at {phase1b_ckpt}. "
-                        f"Cannot run online eval."
-                    )
-                logger.info(f"[DMORL] Loading Phase 1b checkpoint for eval → {phase1b_ckpt}")
-                self.trainer.load_model(phase1b_ckpt)
+            # Load final checkpoint (Phase 2 if it exists, else Phase 1)
+            saved_dir = getattr(self.model_config, "saved_dir", "checkpoints")
+            phase2_ckpt = os.path.join(saved_dir, "dmorl_phase2.pth")
+            phase1_ckpt = os.path.join(saved_dir, "dmorl_phase1.pth")
+            if os.path.exists(phase2_ckpt):
+                logger.info(f"[DMORL] Loading Phase 2 checkpoint for eval → {phase2_ckpt}")
+                self.trainer.load_model(phase2_ckpt)
+                self.model = self.trainer.model
+            elif os.path.exists(phase1_ckpt):
+                logger.info(f"[DMORL] Loading Phase 1 checkpoint for eval → {phase1_ckpt}")
+                self.trainer.load_model(phase1_ckpt)
                 self.model = self.trainer.model
             else:
                 self.load_pretrained_model(is_rl=True)
@@ -191,19 +156,16 @@ class DMORLPipeline(PADPPPipeline):
             logger.info("[DMORL] Running online evaluation ...")
             if not isinstance(self.trainer.generation_method, BARTGeneration):
                 self.trainer.generation_method.generation_config.set_params(
-                    {'temperature': 0.0}
-                )
+                    {'temperature': 0.0})
             online_eval_results = self.run_online_test()
 
         return offline_eval_results, online_eval_results
 
-    # ── Subclasses implement run_basic_skills / run_advanced_skills / run_rlt
-    # ── and run_online_test (scenario-specific case/simulator setup)
-
-    def run_basic_skills(self):
+    # Subclasses provide run_phase1, run_phase2, run_online_test
+    def run_phase1(self):
         raise NotImplementedError
 
-    def run_advanced_skills(self):
+    def run_phase2(self):
         raise NotImplementedError
 
 
@@ -212,15 +174,12 @@ class DMORLPipeline(PADPPPipeline):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class DMORLPipelineForRecommendation(DMORLPipeline, PADPPPipelineForRecommendation):
-    """DMORL pipeline for the recommendation scenario."""
 
     def load_pretrained_model(self, is_rl=False, is_last=False):
         if not is_rl:
-            path = os.path.join(
-                self.model_config.saved_dir, f"model_{self.model_config.domain}.pth")
+            path = os.path.join(self.model_config.saved_dir, f"model_{self.model_config.domain}.pth")
         else:
-            path = os.path.join(
-                self.model_config.saved_dir, f"rl_model_{self.model_config.domain}.pth")
+            path = os.path.join(self.model_config.saved_dir, f"rl_model_{self.model_config.domain}.pth")
         if not os.path.exists(path):
             raise Exception(f"No pretrained model at {path}")
         self.model = self.trainer.load_model(path)
@@ -243,27 +202,19 @@ class DMORLPipelineForRecommendation(DMORLPipeline, PADPPPipelineForRecommendati
             dev_sims = random.sample(dev_sims, len(dev_items))
         return train_items, dev_items, train_sims, dev_sims, action_mapping
 
-    def run_basic_skills(self):
+    def run_phase1(self):
         train_items, _, train_sims, _, action_mapping = self._get_rlt_splits()
         assert isinstance(self.trainer, DMORLTrainer)
-        self.trainer.train_basic_skills(
+        self.trainer.train_phase1(
             cases=train_items, device=self.device,
             simulators=train_sims, action_mapping=action_mapping)
 
-    def run_advanced_skills(self):
+    def run_phase2(self):
         train_items, _, train_sims, _, action_mapping = self._get_rlt_splits()
         assert isinstance(self.trainer, DMORLTrainer)
-        self.trainer.train_advanced_skills(
+        self.trainer.train_phase2(
             cases=train_items, device=self.device,
             simulators=train_sims, action_mapping=action_mapping)
-
-    def run_rlt(self, dev_ratio=0.1):
-        train_items, dev_items, train_sims, dev_sims, action_mapping = \
-            self._get_rlt_splits(dev_ratio)
-        return self.trainer.train_rlt(
-            cases=train_items, dev_cases=dev_items,
-            device=self.device, simulators=train_sims,
-            dev_simulators=dev_sims, action_mapping=action_mapping)
 
     def run_online_test(self, target_items=None, simulators=None):
         if target_items is None:
@@ -285,7 +236,6 @@ class DMORLPipelineForRecommendation(DMORLPipeline, PADPPPipelineForRecommendati
 
         assert self.test_simulators is not None
         with torch.no_grad():
-            # Use DMORL dynamic online test (Phase 2 + Phase 3)
             results = self.trainer.online_test_dmorl(
                 target_items, device=self.device,
                 simulators=simulators, action_mapping=action_mapping,
@@ -298,7 +248,6 @@ class DMORLPipelineForRecommendation(DMORLPipeline, PADPPPipelineForRecommendati
 # ─────────────────────────────────────────────────────────────────────────────
 
 class DMORLPipelineForNegotiation(DMORLPipeline, PADPPPipelineForNegotiation):
-    """DMORL pipeline for the negotiation scenario."""
 
     def load_pretrained_model(self, is_rl=False, is_last=False):
         if not is_rl:
@@ -324,25 +273,17 @@ class DMORLPipelineForNegotiation(DMORLPipeline, PADPPPipelineForNegotiation):
             dev_sims = random.sample(dev_sims, len(dev_cases_split))
         return train_cases, dev_cases_split, train_sims, dev_sims, action_mapping
 
-    def run_basic_skills(self):
+    def run_phase1(self):
         train_cases, _, train_sims, _, action_mapping = self._get_rlt_splits()
-        self.trainer.train_basic_skills(
+        self.trainer.train_phase1(
             cases=train_cases, device=self.device,
             simulators=train_sims, action_mapping=action_mapping)
 
-    def run_advanced_skills(self):
+    def run_phase2(self):
         train_cases, _, train_sims, _, action_mapping = self._get_rlt_splits()
-        self.trainer.train_advanced_skills(
+        self.trainer.train_phase2(
             cases=train_cases, device=self.device,
             simulators=train_sims, action_mapping=action_mapping)
-
-    def run_rlt(self, dev_ratio=0.1):
-        train_cases, dev_cases, train_sims, dev_sims, action_mapping = \
-            self._get_rlt_splits(dev_ratio)
-        return self.trainer.train_rlt(
-            cases=train_cases, dev_cases=dev_cases,
-            device=self.device, simulators=train_sims,
-            dev_simulators=dev_sims, action_mapping=action_mapping)
 
     def run_online_test(self, cases=None, simulators=None):
         if cases is None:
@@ -354,7 +295,6 @@ class DMORLPipelineForNegotiation(DMORLPipeline, PADPPPipelineForNegotiation):
             combine=self.model_config.combined_action)
         if len(simulators) > len(cases):
             simulators = random.sample(simulators, len(cases))
-
         assert self.test_simulators is not None
         with torch.no_grad():
             results = self.trainer.online_test_dmorl(
@@ -369,7 +309,6 @@ class DMORLPipelineForNegotiation(DMORLPipeline, PADPPPipelineForNegotiation):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class DMORLPipelineForEmotionalSupport(DMORLPipeline, PADPPPipelineForEmotionalSupport):
-    """DMORL pipeline for the emotional support scenario."""
 
     def load_pretrained_model(self, is_rl=False, is_last=False):
         if not is_rl:
@@ -395,25 +334,17 @@ class DMORLPipelineForEmotionalSupport(DMORLPipeline, PADPPPipelineForEmotionalS
             dev_sims = random.sample(dev_sims, len(dev_cases_split))
         return train_cases, dev_cases_split, train_sims, dev_sims, action_mapping
 
-    def run_basic_skills(self):
+    def run_phase1(self):
         train_cases, _, train_sims, _, action_mapping = self._get_rlt_splits()
-        self.trainer.train_basic_skills(
+        self.trainer.train_phase1(
             cases=train_cases, device=self.device,
             simulators=train_sims, action_mapping=action_mapping)
 
-    def run_advanced_skills(self):
+    def run_phase2(self):
         train_cases, _, train_sims, _, action_mapping = self._get_rlt_splits()
-        self.trainer.train_advanced_skills(
+        self.trainer.train_phase2(
             cases=train_cases, device=self.device,
             simulators=train_sims, action_mapping=action_mapping)
-
-    def run_rlt(self, dev_ratio=0.1):
-        train_cases, dev_cases, train_sims, dev_sims, action_mapping = \
-            self._get_rlt_splits(dev_ratio)
-        return self.trainer.train_rlt(
-            cases=train_cases, dev_cases=dev_cases,
-            device=self.device, simulators=train_sims,
-            dev_simulators=dev_sims, action_mapping=action_mapping)
 
     def run_online_test(self, cases=None, simulators=None):
         if cases is None:
@@ -425,7 +356,6 @@ class DMORLPipelineForEmotionalSupport(DMORLPipeline, PADPPPipelineForEmotionalS
             combine=self.model_config.combined_action)
         if len(simulators) > len(cases):
             simulators = random.sample(simulators, len(cases))
-
         assert self.test_simulators is not None
         with torch.no_grad():
             results = self.trainer.online_test_dmorl(

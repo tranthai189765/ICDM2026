@@ -1,26 +1,37 @@
 """
-DMORL Trainer
-Implements 3-phase training on top of PADPPTrainer:
+DMORL Trainer — R-PADPP (Regret-Gated PADPP) variant.
 
-  Phase 1a – Basic Skills Curriculum
-    For each LLM-discovered basic skill (weight vector w_k):
-      Run n_skill_train_epochs epochs with w fixed to w_k.
+Two-phase pipeline on top of PADPPTrainer:
 
-  Phase 1b – Advanced Skills
-    Run n_advanced_train_epochs RLT epochs where weights are drawn
-    preferentially from the advanced skill weight vectors.
+  Phase 1 — Basic Skill Curriculum (Anchor Training)
+    Train Q at 7 anchor preferences spanning the simplex:
+      * 3 corners      : [1,0,0], [0,1,0], [0,0,1]
+      * 1 uniform      : [1/3, 1/3, 1/3]
+      * 3 edge midpts  : [1/2,1/2,0], [0,1/2,1/2], [1/2,0,1/2]
+    Centralized: each episode samples one anchor and rolls out under it.
+    Standard PADPP TD loss (random Dirichlet preferences in the inner update).
+    Save dmorl_phase1.pth and evaluate against PADPP Table 2 (4 specific w's).
 
-  Phase 2 – Full PADPP RLT (random weight sampling)
-    Normal PADPP train_rlt to generalise across the whole simplex.
-
-  Phase 3 – Post-Dialogue Refinement (inference-time)
-    After each inference dialogue, call DMORLController.refine_after_dialogue()
-    to accumulate tactical hints fed back to the DynamicWeightController.
+  Phase 2 — R-PADPP (Regret-Gated GPI Knowledge Reuse)
+    Load dmorl_phase1.pth, initialise W_converged with the 7 anchors,
+    initialise Q_old as a snapshot of the current model. For each RL epoch:
+      1. Sample N candidate preferences w (Dirichlet over the simplex).
+      2. (Optional) Active sampling: pick the w with highest current regret
+         for rollout; otherwise pick uniformly at random.
+      3. Roll out trajectories under rollout_w and add to the replay buffer.
+      4. Update Q with the R-PADPP dual loss
+            L = (1-α) · L_self + α · L_know
+         where
+            L_self uses a DDQN-style self target (no GPI)
+            L_know uses a GPI target whose envelope is W_converged only.
+      5. Re-evaluate regret of each candidate w (and the rollout w); admit
+         to W_converged if  regret(w) < epsilon_threshold.
+      6. Every q_old_update_freq epochs, snapshot Q_old ← current model.
+    Save dmorl_phase2.pth at the end.
 """
 
 import copy
 import csv
-import datetime
 import json
 import math
 import os
@@ -28,18 +39,18 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from itertools import count
-from collections import deque, defaultdict
-from tqdm import tqdm
-
+from collections import deque
 from loguru import logger as loguru_logger
 
 from padpp.trainer import PADPPTrainer
 import dmorl.llm_controller as _llm_ctrl
 from dmorl.llm_controller import DMORLController
-from dmorl.model import DMORLModel
 from utils.game import random_weights
-from config.constants import RECOMMENDATION, NEGOTIATION, EMOTIONAL_SUPPORT, SUCCESS_RATE
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CSV / Debug loggers
+# ─────────────────────────────────────────────────────────────────────────────
 
 class DebugLogger:
     """Appended to trainer.loggers when debug=True; echoes loss/metrics to console."""
@@ -57,11 +68,11 @@ class DebugLogger:
 
 class TrainingCSVLogger:
     """
-    Writes two CSV files to log_dir:
-      - training_losses.csv  : global_step, loss
-      - training_rewards.csv : epoch, episode, step, phase, skill, action, done, r0, r1, ...
-    Added to trainer.loggers automatically; loss rows come from train_rl_step;
-    reward rows are written via log_reward() called inside _run_curriculum_rlt.
+    Writes to log_dir:
+      - training_losses.csv  : global_step, phase, loss, L_self, L_know
+      - training_rewards.csv : epoch, episode, step, phase, skill, action, done,
+                               r0..rK, w0..wK, weighted_sum
+      - regret_log.csv       : epoch, w_str, regret, admitted_to_Wconv
     """
 
     def __init__(self, log_dir: str, n_objectives: int):
@@ -70,7 +81,7 @@ class TrainingCSVLogger:
         loss_path = os.path.join(log_dir, "training_losses.csv")
         self._loss_f = open(loss_path, "w", newline="", encoding="utf-8")
         self._loss_w = csv.writer(self._loss_f)
-        self._loss_w.writerow(["global_step", "loss"])
+        self._loss_w.writerow(["global_step", "phase", "loss", "L_self", "L_know"])
 
         reward_path = os.path.join(log_dir, "training_rewards.csv")
         self._reward_f = open(reward_path, "w", newline="", encoding="utf-8")
@@ -81,28 +92,41 @@ class TrainingCSVLogger:
             ["epoch", "episode", "step", "phase", "skill", "action", "done"]
             + obj_cols + w_cols + ["weighted_sum"]
         )
+
+        regret_path = os.path.join(log_dir, "regret_log.csv")
+        self._regret_f = open(regret_path, "w", newline="", encoding="utf-8")
+        self._regret_w = csv.writer(self._regret_f)
+        self._regret_w.writerow(["epoch", "w", "regret", "admitted"])
+
         self._n_obj = n_objectives
 
-        loguru_logger.info(f"[DMORL CSV] Writing logs → {loss_path}")
-        loguru_logger.info(f"[DMORL CSV] Writing logs → {reward_path}")
+        loguru_logger.info(f"[DMORL CSV] losses  → {loss_path}")
+        loguru_logger.info(f"[DMORL CSV] rewards → {reward_path}")
+        loguru_logger.info(f"[DMORL CSV] regret  → {regret_path}")
 
     def record(self, results: dict, step: int) -> None:
         loss = results.get("loss", None)
-        if loss is not None:
-            val = loss.item() if hasattr(loss, "item") else float(loss)
-            self._loss_w.writerow([step, f"{val:.8f}"])
-            self._loss_f.flush()
+        if loss is None:
+            return
+        val = loss.item() if hasattr(loss, "item") else float(loss)
+        l_self = results.get("L_self", float("nan"))
+        l_know = results.get("L_know", float("nan"))
+        if hasattr(l_self, "item"):
+            l_self = l_self.item()
+        if hasattr(l_know, "item"):
+            l_know = l_know.item()
+        phase = results.get("phase", "")
+        self._loss_w.writerow([step, phase, f"{val:.8f}",
+                               f"{float(l_self):.8f}", f"{float(l_know):.8f}"])
+        self._loss_f.flush()
 
-    def log_reward(self, epoch: int, episode: int, step: int,
-                   phase: str, skill: str, action, rewards, done: int,
-                   weight=None) -> None:
+    def log_reward(self, epoch, episode, step, phase, skill,
+                    action, rewards, done, weight=None) -> None:
         if not isinstance(rewards, list):
             rewards = [rewards]
         r_vec = [float(r) for r in rewards[:self._n_obj]]
-        # Pad short reward vectors with zeros so columns line up
         if len(r_vec) < self._n_obj:
             r_vec = r_vec + [0.0] * (self._n_obj - len(r_vec))
-
         if weight is None:
             w_vec = [float("nan")] * self._n_obj
             weighted_sum = float("nan")
@@ -112,7 +136,6 @@ class TrainingCSVLogger:
             if len(w_vec) < self._n_obj:
                 w_vec = w_vec + [0.0] * (self._n_obj - len(w_vec))
             weighted_sum = float(np.dot(w_vec, r_vec))
-
         obj_vals = [f"{v:.6f}" for v in r_vec]
         w_vals = [f"{v:.6f}" for v in w_vec]
         ws_val = f"{weighted_sum:.6f}" if not math.isnan(weighted_sum) else "nan"
@@ -122,10 +145,20 @@ class TrainingCSVLogger:
         )
         self._reward_f.flush()
 
+    def log_regret(self, epoch, w, regret, admitted: bool):
+        w_str = "[" + ",".join(f"{x:.3f}" for x in w) + "]"
+        self._regret_w.writerow([epoch, w_str, f"{regret:.6f}", int(admitted)])
+        self._regret_f.flush()
+
     def close(self) -> None:
         self._loss_f.close()
         self._reward_f.close()
+        self._regret_f.close()
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DMORL Trainer (R-PADPP)
+# ─────────────────────────────────────────────────────────────────────────────
 
 class DMORLTrainer(PADPPTrainer):
 
@@ -140,7 +173,6 @@ class DMORLTrainer(PADPPTrainer):
         if self.loggers is None:
             self.loggers = []
 
-        # Always log rewards + losses to CSV
         csv_log_dir = getattr(model_config, "saved_dir", "checkpoints")
         self.csv_logger = TrainingCSVLogger(csv_log_dir, model_config.n_objectives)
         self.loggers.append(self.csv_logger)
@@ -148,35 +180,38 @@ class DMORLTrainer(PADPPTrainer):
         if getattr(model_config, "debug", False):
             self.loggers.append(DebugLogger())
             _llm_ctrl.enable_debug(True)
-            loguru_logger.info("[DMORL] Debug mode ON — LLM prompts, rewards, and losses will be printed.")
+            loguru_logger.info("[DMORL] Debug ON — LLM prompts and per-step rewards/losses printed.")
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Phase 1a: Basic Skills Curriculum
-    # ─────────────────────────────────────────────────────────────────────────
+        # R-PADPP state (populated in Phase 2)
+        self.q_old_network = None
+        self.W_converged = []          # list[ list[float] ]
 
-    def train_basic_skills(self, cases, device=None, simulators=None,
-                           action_mapping=None):
+    # ═════════════════════════════════════════════════════════════════════════
+    # PHASE 1 — Basic Skill Curriculum (Anchor Pre-training)
+    # ═════════════════════════════════════════════════════════════════════════
+
+    def train_phase1(self, cases, device=None, simulators=None, action_mapping=None):
         """
-        Centralized Phase-1a training: at each episode randomly pick one of
-        the basic skills and run the agent with that weight vector. All N
-        skills share the same `n_skill_train_epochs` total budget.
-        After training, run a few evaluation dialogues per skill and dump
-        them to {saved_dir}/phase1a_eval/<skill_name>.json.
+        Centralized curriculum training at the N anchor preferences.
+        Each episode samples one anchor; standard PADPP TD loss runs on the
+        collected buffer (random Dirichlet preferences inside train_rl_step).
+        Saves dmorl_phase1.pth and emits per-anchor eval dialogues.
         """
         if not self.dmorl_controller:
-            return
+            raise RuntimeError("[DMORL Phase-1] No DMORL controller — cannot train.")
         basic_skills = self.dmorl_controller.skill_library.basic_skills
         if not basic_skills:
-            loguru_logger.warning("[DMORL Phase-1a] No basic skills found. Skipping.")
+            loguru_logger.warning("[DMORL Phase-1] No basic skills found. Skipping.")
             return
 
         basic_weights = np.array([s["weight_vector"] for s in basic_skills])
         skill_names = [s["name"] for s in basic_skills]
 
         loguru_logger.info(
-            f"[DMORL Phase-1a] Centralized training on {len(basic_skills)} basic skills "
-            f"({self.model_config.n_skill_train_epochs} epochs total, skill sampled per episode)."
+            f"[DMORL Phase-1] Centralized anchor training: {len(basic_skills)} anchors "
+            f"over {self.model_config.n_skill_train_epochs} RL epochs."
         )
+        loguru_logger.info(f"[DMORL Phase-1] Anchors = {basic_weights.tolist()}")
 
         original_epochs = self.model_config.num_train_rl_epochs
         self.model_config.num_train_rl_epochs = self.model_config.n_skill_train_epochs
@@ -184,32 +219,31 @@ class DMORLTrainer(PADPPTrainer):
         self._run_curriculum_rlt(
             cases, device, simulators, action_mapping,
             skill_weights=basic_weights, skill_names=skill_names, p_skill=1.0,
-            phase="1a", skill_name="centralized",
+            phase="phase1", skill_name="anchor",
         )
 
         self.model_config.num_train_rl_epochs = original_epochs
-        loguru_logger.info("[DMORL Phase-1a] Centralized basic skill training complete.")
+        loguru_logger.info("[DMORL Phase-1] Anchor curriculum training complete.")
 
-        # Save Phase 1a checkpoint
+        # Save Phase 1 checkpoint
         saved_dir = getattr(self.model_config, "saved_dir", "checkpoints")
         os.makedirs(saved_dir, exist_ok=True)
-        ckpt_path = os.path.join(saved_dir, "dmorl_phase1a.pth")
+        ckpt_path = os.path.join(saved_dir, "dmorl_phase1.pth")
         self.save_model(ckpt_path)
-        loguru_logger.info(f"[DMORL Phase-1a] Checkpoint saved → {ckpt_path}")
+        loguru_logger.info(f"[DMORL Phase-1] Checkpoint saved → {ckpt_path}")
 
-        # Per-skill evaluation: run each skill, save dialogues to JSON
-        self._eval_basic_skills_per_skill(cases, device, simulators, action_mapping, basic_skills)
+        # Per-anchor evaluation dialogues
+        self._eval_anchors_per_skill(cases, device, simulators, action_mapping, basic_skills)
 
-    def _eval_basic_skills_per_skill(self, cases, device, simulators,
-                                       action_mapping, basic_skills):
-        """For each basic skill, run N eval episodes with that fixed weight
-        and dump dialogues to {saved_dir}/phase1a_eval/<skill>.json."""
+    def _eval_anchors_per_skill(self, cases, device, simulators, action_mapping,
+                                  basic_skills):
+        """Run n_eval episodes per anchor and dump dialogues to JSON."""
         out_dir = os.path.join(
             getattr(self.model_config, "saved_dir", "checkpoints"),
-            "phase1a_eval",
+            "phase1_eval",
         )
         os.makedirs(out_dir, exist_ok=True)
-        n_eval = getattr(self.model_config, "phase1a_eval_episodes", 3)
+        n_eval = getattr(self.model_config, "phase1_eval_episodes", 3)
         max_horizon = getattr(self.game_config, "max_horizon", 10)
 
         self.model.to(self.device)
@@ -240,23 +274,18 @@ class DMORLTrainer(PADPPTrainer):
                     new_utts = new_dialogue[len(pre_dialogue):]
                     final_reward = reward if isinstance(reward, list) else [float(reward)]
                     turns.append({
-                        "step": t,
-                        "action": str(action),
-                        "utterances": new_utts,
-                        "reward": final_reward,
+                        "step": t, "action": str(action),
+                        "utterances": new_utts, "reward": final_reward,
                         "done": int(bool(done)),
                     })
                     if done or t >= max_horizon:
                         break
 
                 episodes.append({
-                    "episode": ep_idx,
-                    "skill": skill["name"],
+                    "episode": ep_idx, "skill": skill["name"],
                     "weight_vector": [float(x) for x in w_fixed.tolist()],
                     "outcome": "success" if done == 1 else ("failure" if done == -1 else "ongoing"),
-                    "n_turns": len(turns),
-                    "final_reward": final_reward,
-                    "turns": turns,
+                    "n_turns": len(turns), "final_reward": final_reward, "turns": turns,
                 })
 
             safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in skill["name"])
@@ -264,159 +293,354 @@ class DMORLTrainer(PADPPTrainer):
             with open(out_path, "w", encoding="utf-8") as f:
                 json.dump(episodes, f, indent=2, default=str, ensure_ascii=False)
             loguru_logger.info(
-                f"[Phase-1a Eval] {skill['name']}: {n_eval} dialogues → {out_path}"
+                f"[Phase-1 Eval] {skill['name']}: {n_eval} dialogues → {out_path}"
             )
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Phase 1b: Advanced Skills
-    # ─────────────────────────────────────────────────────────────────────────
+    # ═════════════════════════════════════════════════════════════════════════
+    # PHASE 2 — R-PADPP (Regret-Gated GPI)
+    # ═════════════════════════════════════════════════════════════════════════
 
-    def train_advanced_skills(self, cases, device=None, simulators=None,
-                              action_mapping=None):
+    def train_phase2(self, cases, device=None, simulators=None, action_mapping=None):
         """
-        Run `n_advanced_train_epochs` RLT epochs with episode weights sampled
-        preferentially from the advanced skill weight vectors (p=0.6).
+        R-PADPP main loop. Assumes the model has already been loaded from
+        dmorl_phase1.pth by the pipeline.
         """
         if not self.dmorl_controller:
-            return
-        advanced_skills = self.dmorl_controller.skill_library.advanced_skills
-        if not advanced_skills:
-            loguru_logger.warning("[DMORL Phase-1b] No advanced skills. Skipping.")
-            return
+            raise RuntimeError("[DMORL Phase-2] No DMORL controller — cannot train.")
 
-        adv_weights = np.array([s["weight_vector"] for s in advanced_skills])
-        loguru_logger.info(
-            f"[DMORL Phase-1b] Training with {len(advanced_skills)} advanced skills "
-            f"over {self.model_config.n_advanced_train_epochs} epochs."
-        )
+        n_obj   = self.model_config.n_objectives
+        n_epochs = self.model_config.n_rpadpp_epochs
+        epsilon = self.model_config.epsilon_threshold
+        q_old_freq = self.model_config.q_old_update_freq
+        n_cand  = self.model_config.n_candidate_w
+        use_active = self.model_config.use_active_sampling
+        alpha_r = self.model_config.alpha_rpadpp
 
-        original_epochs = self.model_config.num_train_rl_epochs
-        self.model_config.num_train_rl_epochs = self.model_config.n_advanced_train_epochs
-
-        adv_names = [s["name"] for s in advanced_skills]
-        # p_skill=1.0 ⇒ every Phase-1b episode is trained on an advanced skill
-        # weight (no random-weight branch). With a single uniform advanced skill
-        # [1/3, 1/3, 1/3] this matches PADPP Table 2's Uniform row exactly.
-        #
-        # GPI teacher forcing: set _gpi_skill_envelope to the Phase 1a basic
-        # skill weights only ([1,0,0], [0,1,0], [0,0,1]). predict() (rollout
-        # action selection) and train_rl_step() (Q2 envelope + Q1 preferences)
-        # will both use these as the GPI teachers. The advanced skill is the
-        # student — it should not appear in the envelope.
+        # Init W_converged with all anchors from Phase 1
         basic_skills = self.dmorl_controller.skill_library.basic_skills
-        envelope_weights = [s["weight_vector"] for s in basic_skills]
-        self._gpi_skill_envelope = torch.FloatTensor(envelope_weights).to(self.device)
+        self.W_converged = [list(map(float, s["weight_vector"])) for s in basic_skills]
 
-        # Self-Bellman: each Phase-1b update ALSO gets a vanilla TD term at the
-        # advanced student preference (greedy argmax target under w_self, no
-        # GPI envelope). Total inner-loop loss = loss_teacher + loss_self.
-        adv_weight_tensor = torch.FloatTensor(adv_weights).to(self.device)
-        self._self_bellman_preference = adv_weight_tensor[0:1]   # [1, n_obj]
-        self._extra_td_loss_hook = self._compute_self_bellman_loss
+        # Init Q_old snapshot
+        self.model.to(self.device)
+        self.q_old_network = copy.deepcopy(self.model).to(self.device)
+        self.q_old_network.eval()
+
+        # Replay buffer and optimizer
+        max_training_steps = n_epochs * int(
+            self.model_config.buffer_length // self.model_config.train_rl_batch_size
+        )
+        optimizer = self.create_optimizer(self.model, self.model_config.actor_learning_rate)
+        scheduler = self.create_scheduler(
+            optimizer, num_warmup_steps=self.model_config.warmup_steps,
+            max_train_steps=max_training_steps,
+        )
+        buffer = deque(maxlen=self.model_config.buffer_length)
+        self.target_model = copy.deepcopy(self.model).to(self.device)
 
         loguru_logger.info(
-            f"[DMORL Phase-1b] GPI teacher forcing envelope (basic skills only) "
-            f"= {envelope_weights}"
-        )
-        loguru_logger.info(
-            f"[DMORL Phase-1b] Self-Bellman preference (student) "
-            f"= {adv_weight_tensor[0].tolist()}"
+            f"[DMORL Phase-2] R-PADPP start: n_epochs={n_epochs}, "
+            f"|W_converged|_init={len(self.W_converged)}, epsilon={epsilon}, "
+            f"alpha={alpha_r}, active_sampling={use_active}"
         )
 
-        try:
-            self._run_curriculum_rlt(cases, device, simulators, action_mapping,
-                                     skill_weights=adv_weights, skill_names=adv_names,
-                                     p_skill=1.0,
-                                     phase="1b", skill_name="advanced")
-        finally:
-            # Always clear so later phases / eval revert to PADPP default
-            self._gpi_skill_envelope = None
-            self._self_bellman_preference = None
-            self._extra_td_loss_hook = None
+        episode_counter = 0
+        for epoch in range(n_epochs):
+            self.model.train()
 
-        self.model_config.num_train_rl_epochs = original_epochs
-        loguru_logger.info("[DMORL Phase-1b] Advanced skill training complete.")
+            # 1. Sample candidate preferences for this epoch
+            candidate_ws = [random_weights(n_obj) for _ in range(n_cand)]
 
-        # Save Phase 1b checkpoint so evaluation can load the final trained model.
+            # 2. Choose rollout preference (active-sampling or random)
+            if use_active and len(buffer) >= self.model_config.regret_batch_size:
+                regrets = [self._evaluate_regret_for_w(w, buffer) for w in candidate_ws]
+                rollout_w = candidate_ws[int(np.argmax(regrets))]
+            else:
+                rollout_w = candidate_ws[np.random.randint(0, len(candidate_ws))]
+
+            # 3. Collect trajectories under rollout_w
+            for _ in range(self.model_config.sampled_times):
+                case = np.random.choice(cases)
+                simulator = np.random.choice(simulators)
+                state = self.game.reset(case, simulator)
+                state['w'] = rollout_w
+                done = False
+
+                for t in count():
+                    old_state = copy.deepcopy(state)
+                    action, _, _ = self.predict(
+                        state, torch.FloatTensor(rollout_w).to(self.device),
+                        action_mapping, is_computing_reward=False,
+                        use_gpi=True,
+                    )
+                    state, reward, done, _ = self.game.step(
+                        state, action, self.generation_method, simulator
+                    )
+                    reward_t = torch.tensor([reward], device=self.device, dtype=torch.float)
+                    old_state['next_state'] = copy.deepcopy(state)
+                    old_state['act'] = action
+
+                    done_flag = 1 if done in (1, -1) else 0
+                    if done == -1:
+                        done = 1
+
+                    buffer.append([old_state, reward_t, 1, abs(done_flag)])
+
+                    r_list = reward_t.squeeze().tolist()
+                    if not isinstance(r_list, list):
+                        r_list = [r_list]
+                    self.csv_logger.log_reward(
+                        epoch=epoch, episode=episode_counter, step=t,
+                        phase="phase2", skill="rpadpp",
+                        action=action, rewards=r_list, done=done_flag,
+                        weight=rollout_w,
+                    )
+                    if done:
+                        break
+                episode_counter += 1
+
+            # 4. R-PADPP train step
+            if len(buffer) >= self.model_config.train_rl_batch_size:
+                loguru_logger.warning(f"[Phase-2] Epoch {epoch}: R-PADPP Q-net update ...")
+                self._train_rl_step_rpadpp(buffer, action_mapping, optimizer, scheduler, alpha_r)
+
+            # 5. Re-evaluate regret + update W_converged
+            if len(buffer) >= self.model_config.regret_batch_size:
+                for w_cand in candidate_ws + [rollout_w]:
+                    reg = self._evaluate_regret_for_w(w_cand, buffer)
+                    admitted = (reg < epsilon)
+                    if admitted and not self._is_in_W_converged(w_cand):
+                        self.W_converged.append(list(map(float, w_cand)))
+                    self.csv_logger.log_regret(epoch, w_cand, reg, admitted)
+                loguru_logger.info(
+                    f"[Phase-2] Epoch {epoch}: |W_converged|={len(self.W_converged)}"
+                )
+
+            # 6. Snapshot Q_old periodically
+            if (epoch + 1) % q_old_freq == 0:
+                self.q_old_network.load_state_dict(self.model.state_dict())
+                loguru_logger.info(f"[Phase-2] Epoch {epoch}: Q_old snapshot updated.")
+
+        # Save Phase 2 checkpoint
         saved_dir = getattr(self.model_config, "saved_dir", "checkpoints")
         os.makedirs(saved_dir, exist_ok=True)
-        ckpt_path = os.path.join(saved_dir, "dmorl_phase1b.pth")
+        ckpt_path = os.path.join(saved_dir, "dmorl_phase2.pth")
         self.save_model(ckpt_path)
-        loguru_logger.info(f"[DMORL Phase-1b] Checkpoint saved → {ckpt_path}")
+        loguru_logger.info(
+            f"[DMORL Phase-2] Complete. Final |W_converged|={len(self.W_converged)}. "
+            f"Checkpoint saved → {ckpt_path}"
+        )
+
+    def _is_in_W_converged(self, w, tol: float = 1e-3) -> bool:
+        for w_old in self.W_converged:
+            if all(abs(float(a) - float(b)) < tol for a, b in zip(w, w_old)):
+                return True
+        return False
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Self-Bellman loss for Phase 1b (advanced student, no GPI envelope)
+    # Regret estimation
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _compute_self_bellman_loss(self, batch, batch_act, rewards, batch_done):
+    def _evaluate_regret_for_w(self, w, buffer) -> float:
         """
-        Vanilla TD loss at the advanced student preference w_self = [1/3,1/3,1/3].
-        Target action a* = argmax_a (w_self · Q_target(s', a)).
-        Same α-weighted scalar + vector MSE as the main GPI term, but with a
-        single preference and no convex envelope over teachers.
+        Reg(w) = E_{s in buffer} [ mean_{a, o} |Q_current(s, a, w) - Q_old(s, a, w)| ]
 
-        Called per inner mini-batch by PADPP train_rl_step when
-        self._extra_td_loss_hook is set.
+        Sample a small state batch from the replay buffer and average the
+        per-action, per-objective absolute Q-difference.
         """
-        w_self = self._self_bellman_preference   # [1, n_obj]
-        n_obj  = self.model_config.n_objectives
-        alpha  = self.model_config.alpha
-        gamma  = self.model_config.gamma
+        n = min(self.model_config.regret_batch_size, len(buffer))
+        if n <= 0 or self.q_old_network is None:
+            return float("inf")
 
-        self.model.train()
+        sample_idx = np.random.choice(len(buffer), n, replace=False)
+        states = [buffer[i][0] for i in sample_idx.tolist()]
 
-        # State / next-state representations under the advanced preference
-        state, next_state, w_embedding = self.model.compute_state_resp(batch, w_self)
-        bs = state.size(0)
+        loader = self.construct_dataloaders(
+            states, batch_size=n, shuffle=False,
+            goal2id=None, num_workers=0,
+        )
 
-        # w_embedding is [1, w_dim] (n_pref=1) → broadcast to [bs, w_dim]
-        w_embedding = w_embedding.repeat(1, bs).view(-1, w_embedding.size(-1))
+        w_tensor = torch.FloatTensor([list(w)]).to(self.device)  # [1, n_obj]
 
-        # Q(s, a, w_self)
-        feature = torch.cat([state, w_embedding], dim=-1)
-        Q_all = self.model.actor(feature)                      # [bs, n_a*n_obj]
-        action_size = Q_all.view(Q_all.size(0), -1, n_obj).size(1)
-        Q_all = Q_all.view(Q_all.size(0), -1, n_obj)           # [bs, n_a, n_obj]
-        Q1 = Q_all.gather(
-            1, batch_act.view(-1, 1, 1).expand(bs, 1, n_obj)
-        ).view(-1, n_obj)                                       # [bs, n_obj]
-
-        # Greedy target action under w_self at next state
+        total_abs = 0.0
+        total_count = 0
+        self.model.eval()
         with torch.no_grad():
-            next_feature = torch.cat([next_state, w_embedding], dim=-1)
-            Q_next = self.target_model.actor(next_feature).detach()
-            Q_next = Q_next.view(-1, action_size, n_obj)        # [bs, n_a, n_obj]
-            scalarized = (w_self.view(1, 1, n_obj) * Q_next).sum(dim=-1)  # [bs, n_a]
-            best_a = scalarized.max(1)[1]                       # [bs]
-            Q_next_target = Q_next.gather(
-                1, best_a.view(-1, 1, 1).expand(bs, 1, n_obj)
-            ).squeeze(1)                                        # [bs, n_obj]
+            for batch in loader:
+                state_resp, _, w_emb = self.model.compute_state_resp(batch, w_tensor)
+                bs = state_resp.size(0)
+                # broadcast w_emb [1, w_dim] across bs
+                w_emb_b = w_emb.repeat(1, bs).view(-1, w_emb.size(-1))
+                feat = torch.cat([state_resp, w_emb_b], dim=-1)
 
-        # Bellman target
-        dones = batch_done.view(-1, 1)                          # [bs, 1]
-        TQ = rewards + gamma * (1 - dones) * Q_next_target      # [bs, n_obj]
-
-        # α-weighted scalar + vector MSE under w_self
-        w_batch = w_self.expand(bs, n_obj)
-        wQ  = (w_batch * Q1).sum(dim=-1)                        # [bs]
-        wTQ = (w_batch * TQ).sum(dim=-1)                        # [bs]
-
-        loss = alpha * F.mse_loss(wQ, wTQ, reduction='mean')
-        loss = loss + (1.0 - alpha) * F.mse_loss(Q1, TQ, reduction='mean')
-        return loss
+                q_now = self.model.actor(feat).detach()
+                q_old = self.q_old_network.actor(feat).detach()
+                # both [bs, action_size * n_obj]
+                diff = (q_now - q_old).abs()
+                total_abs += diff.sum().item()
+                total_count += diff.numel()
+        self.model.train()
+        return total_abs / max(total_count, 1)
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Internal: Curriculum RLT (shared by Phase 1a and 1b)
+    # R-PADPP TD step
     # ─────────────────────────────────────────────────────────────────────────
+
+    def _train_rl_step_rpadpp(self, buffer, action_mapping, optimizer, scheduler,
+                                alpha_r):
+        """
+        One inner Q-network update with the R-PADPP dual loss:
+            L = (1 - alpha_r) * L_self  +  alpha_r * L_know
+
+          L_self : DDQN-style scalar TD MSE at the sampled preference w
+          L_know : vector MSE between Q1 and y_know, where y_know uses the GPI
+                    action chosen over W_converged as the next-step action.
+        """
+        n_obj = self.model_config.n_objectives
+        gamma = self.model_config.gamma
+
+        progress = tqdm = range  # avoid extra import; not strictly needed
+
+        mean_total, mean_self, mean_know = [], [], []
+
+        for i in range(self.model_config.num_train_q_network_epochs):
+            indices = np.random.choice(
+                len(buffer), self.model_config.train_rl_batch_size)
+            batch_instances = [buffer[i] for i in indices.tolist()]
+            states = [x[0] for x in batch_instances]
+
+            if isinstance(action_mapping, tuple):
+                batch_act = [action_mapping[0][s['act']] for s in states]
+            else:
+                batch_act = [action_mapping[s['act']] for s in states]
+            batch_act = torch.LongTensor(batch_act).to(self.device)
+
+            rewards = torch.cat([x[1] for x in batch_instances], dim=0)
+            batch_done = torch.Tensor([x[3] for x in batch_instances]).to(self.device)
+
+            train_loader = self.construct_dataloaders(
+                states, batch_size=self.model_config.train_rl_batch_size,
+                shuffle=False, goal2id=action_mapping,
+                num_workers=self.model_config.num_workers,
+            )
+
+            for batch in train_loader:
+                # Sample K random training preferences (PADPP convention)
+                K = self.model_config.n_preferences
+                w_sampled_np = random_weights(n_obj, n=K)
+                w_sampled = torch.Tensor(w_sampled_np).to(self.device).requires_grad_(False)
+
+                # Encode states once
+                state, next_state, w_emb = self.model.compute_state_resp(batch, w_sampled)
+                bs = state.size(0)
+
+                # Repeat to [K*bs, ·]
+                w_emb_rep    = w_emb.repeat(1, bs).view(-1, w_emb.size(-1))
+                state_rep    = state.repeat(K, 1).view(-1, state.size(-1))
+                next_st_rep  = next_state.repeat(K, 1).view(-1, next_state.size(-1))
+                action_rep   = batch_act.repeat(K, 1).view(-1)
+                w_rep        = w_sampled.repeat(1, bs).view(-1, n_obj)        # [K*bs, n_obj]
+                rew_rep      = rewards.repeat(K, 1).view(-1, n_obj)            # [K*bs, n_obj]
+                done_rep     = batch_done.repeat(K, 1).view(-1, 1)              # [K*bs, 1]
+
+                # === Q1 = Q(s, a, w_sampled) ===
+                feature = torch.cat([state_rep, w_emb_rep], dim=-1)
+                Q_all = self.model.actor(feature)
+                action_size = Q_all.view(Q_all.size(0), -1, n_obj).size(1)
+                Q_all = Q_all.view(Q_all.size(0), action_size, n_obj)
+                Q1 = Q_all.gather(
+                    1, action_rep.view(-1, 1, 1).expand(Q_all.size(0), 1, n_obj)
+                ).squeeze(1)                                                    # [K*bs, n_obj]
+
+                # === L_self (DDQN scalar TD) ===
+                with torch.no_grad():
+                    self.model.eval()
+                    next_feat = torch.cat([next_st_rep, w_emb_rep], dim=-1)
+                    Q_next_T = self.target_model.actor(next_feat).detach()
+                    Q_next_T = Q_next_T.view(-1, action_size, n_obj)            # [K*bs, n_a, n_obj]
+
+                    # argmax_a (w · Q_target(s', a, w))
+                    w_rep_3d = w_rep.unsqueeze(1).expand(-1, action_size, n_obj)
+                    scalar_self = (w_rep_3d * Q_next_T).sum(dim=-1)             # [K*bs, n_a]
+                    a_star = scalar_self.max(dim=1)[1]                          # [K*bs]
+                    Q_next_self = Q_next_T.gather(
+                        1, a_star.view(-1, 1, 1).expand(-1, 1, n_obj)
+                    ).squeeze(1)                                                # [K*bs, n_obj]
+                self.model.train()
+
+                y_self_vec = rew_rep + gamma * (1 - done_rep) * Q_next_self     # [K*bs, n_obj]
+                wQ1_scalar = (w_rep * Q1).sum(dim=-1)                            # [K*bs]
+                wY_self    = (w_rep * y_self_vec).sum(dim=-1)                    # [K*bs]
+                L_self = F.mse_loss(wQ1_scalar, wY_self, reduction='mean')
+
+                # === L_know (GPI vector TD, envelope = W_converged) ===
+                with torch.no_grad():
+                    self.model.eval()
+                    W_conv_np = np.array(self.W_converged, dtype=np.float32)
+                    W_conv_t = torch.from_numpy(W_conv_np).to(self.device)      # [K_c, n_obj]
+                    K_c = W_conv_t.size(0)
+
+                    _, _, w_emb_conv = self.model.compute_state_resp(batch, W_conv_t)
+                    # w_emb_conv: [K_c, w_dim]
+                    w_emb_conv_rep = w_emb_conv.repeat(1, bs).view(-1, w_emb_conv.size(-1))
+                    next_st_conv = next_state.repeat(K_c, 1).view(-1, next_state.size(-1))
+                    feat_conv = torch.cat([next_st_conv, w_emb_conv_rep], dim=-1)
+
+                    Q_next_conv = self.target_model.actor(feat_conv).detach()
+                    Q_next_conv = Q_next_conv.view(K_c, bs, action_size, n_obj)
+
+                    # score[k_sampled, b, a] = max_{k_c} ( w_sampled[k_sampled] · Q_next_conv[k_c, b, a, :] )
+                    # einsum: tmp[k_c, k, b, a] = sum_o w[k,o] * Q[k_c,b,a,o]
+                    tmp = torch.einsum('ko,cbao->ckba', w_sampled, Q_next_conv)
+                    score, _ = tmp.max(dim=0)                                   # [K, bs, action_size]
+                    a_teacher = score.max(dim=-1)[1]                            # [K, bs]
+
+                    # Evaluate Q_next at sampled w (not w_i) at a_teacher
+                    Q_next_T_kb = Q_next_T.view(K, bs, action_size, n_obj)
+                    Q_at_teacher = Q_next_T_kb.gather(
+                        2, a_teacher.unsqueeze(-1).unsqueeze(-1).expand(K, bs, 1, n_obj)
+                    ).squeeze(2).view(-1, n_obj)                                # [K*bs, n_obj]
+                self.model.train()
+
+                y_know = rew_rep + gamma * (1 - done_rep) * Q_at_teacher        # [K*bs, n_obj]
+                L_know = F.mse_loss(Q1, y_know, reduction='mean')
+
+                # === Total ===
+                loss = (1.0 - alpha_r) * L_self + alpha_r * L_know
+
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                scheduler.step()
+
+                # Update target network every inner step
+                self.target_model.load_state_dict(self.model.state_dict())
+
+                mean_total.append(loss.detach())
+                mean_self.append(L_self.detach())
+                mean_know.append(L_know.detach())
+
+        m_total = torch.stack(mean_total).mean()
+        m_self  = torch.stack(mean_self).mean()
+        m_know  = torch.stack(mean_know).mean()
+        results = {"loss": m_total, "L_self": m_self, "L_know": m_know, "phase": "phase2"}
+        loguru_logger.info(
+            f"[R-PADPP] step={self.ppo_global_step} "
+            f"loss={m_total.item():.6f} L_self={m_self.item():.6f} L_know={m_know.item():.6f}"
+        )
+        for lg in self.loggers:
+            lg.record(results, self.ppo_global_step)
+        self.ppo_global_step += 1
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # Internal: Curriculum RLT (Phase 1)
+    # ═════════════════════════════════════════════════════════════════════════
 
     def _run_curriculum_rlt(self, cases, device, simulators, action_mapping,
                              fixed_weight=None, skill_weights=None, skill_names=None,
-                             p_skill=1.0, phase="1a", skill_name=""):
+                             p_skill=1.0, phase="phase1", skill_name=""):
         """
-        Run `num_train_rl_epochs` of GPI TD-learning.
-        - fixed_weight: use this w for every episode
-        - skill_weights + p_skill: probabilistically sample from skill_weights
-        - skill_names: names for each row of skill_weights (used in CSV log)
+        Phase 1 inner loop. Uses PADPP-original train_rl_step (random Dirichlet
+        preferences in the inner update). No GPI hooks, no envelopes — vanilla.
         """
         self.model.to(self.device)
 
@@ -424,27 +648,23 @@ class DMORLTrainer(PADPPTrainer):
             self.model_config.buffer_length // self.model_config.train_rl_batch_size
         )
         optimizer = self.create_optimizer(self.model, self.model_config.actor_learning_rate)
-        scheduler = self.create_scheduler(optimizer,
-                                          num_warmup_steps=self.model_config.warmup_steps,
-                                          max_train_steps=max_training_steps)
+        scheduler = self.create_scheduler(
+            optimizer, num_warmup_steps=self.model_config.warmup_steps,
+            max_train_steps=max_training_steps,
+        )
 
-        # Buffer format matches PADPP: [state_dict, reward_tensor, 1, done_flag]
         buffer = deque(maxlen=self.model_config.buffer_length)
         self.memory_buffer = deque(maxlen=self.model_config.preference_buffer_length)
-
-        best_metric = -math.inf
 
         episode_counter = 0
         for train_step in range(self.model_config.num_train_rl_epochs):
             self.model.train()
 
-            # ── Collect trajectories ──────────────────────────────────────────
             for _ in range(self.model_config.sampled_times):
                 case = np.random.choice(cases)
                 simulator = np.random.choice(simulators)
                 state = self.game.reset(case, simulator)
 
-                # Weight selection
                 if fixed_weight is not None:
                     w = fixed_weight
                     current_skill = skill_name
@@ -453,257 +673,45 @@ class DMORLTrainer(PADPPTrainer):
                     w = skill_weights[idx]
                     current_skill = skill_names[idx] if skill_names else f"skill_{idx}"
                 else:
-                    # random_weights(dim) with default n=1 already returns the
-                    # weight vector (a list); the extra [0] would strip it to a
-                    # single scalar float and break torch.FloatTensor below.
                     w = random_weights(self.model_config.n_objectives)
                     current_skill = "random"
 
                 state['w'] = w
                 done = False
-
                 for t in count():
                     old_state = copy.deepcopy(state)
-
                     action, _, _ = self.predict(
                         state, torch.FloatTensor(w).to(self.device),
-                        action_mapping, is_computing_reward=False,
-                        use_gpi=(phase == "1b")   # GPI only in Phase 1b
+                        action_mapping, is_computing_reward=False, use_gpi=False,
                     )
-
                     state, reward, done, _ = self.game.step(
                         state, action, self.generation_method, simulator
                     )
-
-                    reward = torch.tensor([reward], device=self.device, dtype=torch.float)
+                    reward_t = torch.tensor([reward], device=self.device, dtype=torch.float)
                     old_state['next_state'] = copy.deepcopy(state)
                     old_state['act'] = action
 
-                    # Normalise done flag to match PADPP convention
                     done_flag = 1 if done in (1, -1) else 0
                     if done == -1:
                         done = 1
+                    buffer.append([old_state, reward_t, 1, abs(done_flag)])
 
-                    # Buffer element: [state_dict, reward, 1, abs(done)]
-                    buffer.append([old_state, reward, 1, abs(done_flag)])
-
-                    r_list = reward.squeeze().tolist()
+                    r_list = reward_t.squeeze().tolist()
                     if not isinstance(r_list, list):
                         r_list = [r_list]
-
-                    # CSV reward logging (always on)
                     self.csv_logger.log_reward(
                         epoch=train_step, episode=episode_counter, step=t,
                         phase=phase, skill=current_skill,
-                        action=action, rewards=r_list, done=done_flag,
-                        weight=w,
+                        action=action, rewards=r_list, done=done_flag, weight=w,
                     )
-
-                    if getattr(self.model_config, "debug", False):
-                        r_str = "[" + ", ".join(f"{v:.4f}" for v in r_list) + "]"
-                        loguru_logger.debug(
-                            f"[DEBUG|Curriculum] epoch={train_step} t={t} "
-                            f"action={action} reward={r_str} done={done_flag}"
-                        )
-
                     if done:
                         break
-
                 episode_counter += 1
 
-            # ── RL update ─────────────────────────────────────────────────────
             if train_step >= 0 and len(buffer) >= self.model_config.train_rl_batch_size:
                 loguru_logger.warning(
-                    f"[Curriculum] Epoch {train_step}, updating Q-network ..."
+                    f"[Curriculum] Epoch {train_step}, vanilla PADPP Q-net update ..."
                 )
                 self.train_rl_step(buffer, action_mapping, optimizer, scheduler)
 
-        loguru_logger.info("[Curriculum] Phase complete.")
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Phase 2: Inference with Dynamic Weights
-    # ─────────────────────────────────────────────────────────────────────────
-
-    def predict_dynamic(self, state, dialogue_history, action_mapping,
-                        is_test=True, step_in_episode=0):
-        """
-        Like predict() but replaces the static w with an LLM-chosen w
-        every `dynamic_weight_horizon` turns (Phase 2).
-        Also applies GPI over the full skill library when available.
-        """
-        use_dynamic = (
-            self.model_config.use_dynamic_weight
-            and self.dmorl_controller is not None
-        )
-        horizon = getattr(self.model_config, 'dynamic_weight_horizon', 3)
-
-        if use_dynamic and step_in_episode % horizon == 0:
-            w_list = self.dmorl_controller.get_dynamic_weight(dialogue_history)
-            w = np.array(w_list)
-        else:
-            w = np.array(state.get('w', [1.0 / self.model_config.n_objectives]
-                                   * self.model_config.n_objectives))
-
-        state['w'] = w
-
-        # If model has a skill library, use skill-library GPI
-        skill_weights = None
-        if isinstance(self.model, DMORLModel):
-            skill_weights = self.model.get_skill_weight_tensor(self.device)
-
-        if skill_weights is not None and skill_weights.size(0) > 0:
-            action, log_prob = self._predict_with_skill_gpi(
-                state, w, skill_weights, action_mapping, is_test
-            )
-            return action, log_prob, None
-        else:
-            return self.predict(state, torch.FloatTensor(w).to(self.device),
-                                action_mapping, is_test=is_test, use_gpi=True)
-
-    def _predict_with_skill_gpi(self, state, w, skill_weights, action_mapping, is_test):
-        """
-        GPI over the full skill library: for each action, take the max
-        scalarised Q-value across all skill weight vectors.
-        """
-        if isinstance(action_mapping, tuple):
-            inverse_mapping = {v: k for k, v in action_mapping[0].items()}
-        else:
-            inverse_mapping = {v: k for k, v in action_mapping.items()}
-
-        data_loader = self.construct_dataloaders(
-            [state], batch_size=1, goal2id=action_mapping,
-            shuffle=False, num_workers=self.model_config.num_workers
-        )
-
-        self.model.eval()
-        with torch.no_grad():
-            for batch in data_loader:
-                w_tensor = torch.FloatTensor(w).to(self.device)
-                state_rep, _, w_emb = self.model.compute_state_resp(batch, w_tensor)
-                feature = torch.cat([state_rep, w_emb.unsqueeze(0)], dim=-1)
-
-                # GPI over skill library
-                gpi_logits = self.model.gpi_action_values(feature, skill_weights)  # [1, n_actions]
-
-                # Mask redundant actions before selection
-                from padpp.trainer import _build_action_mask
-                action_mask = _build_action_mask(
-                    action_mapping, gpi_logits.size(-1), gpi_logits.device)
-                gpi_logits = gpi_logits.masked_fill(~action_mask, float('-inf'))
-
-                if is_test:
-                    action_idx = gpi_logits.argmax().item()
-                else:
-                    eps = getattr(self.model_config, 'epsilon', 0.1)
-                    if np.random.random() < eps:
-                        # sample uniformly from VALID actions only
-                        valid_idx = action_mask.nonzero(as_tuple=False).squeeze(-1).tolist()
-                        action_idx = int(np.random.choice(valid_idx))
-                    else:
-                        action_idx = gpi_logits.argmax().item()
-
-                action = inverse_mapping[action_idx]
-                return action, None
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Phase 3: Post-Dialogue Refinement
-    # ─────────────────────────────────────────────────────────────────────────
-
-    def post_dialogue_refinement(self, dialogue_history, outcome: str):
-        """Call LLM to generate and store tactical hints after a dialogue."""
-        if self.dmorl_controller and self.model_config.use_hints:
-            hints = self.dmorl_controller.refine_after_dialogue(dialogue_history, outcome)
-            loguru_logger.info(f"[DMORL Phase-3] Generated {len(hints)} new hints.")
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Override online_test: dynamic weights + hints + refinement
-    # ─────────────────────────────────────────────────────────────────────────
-
-    def online_test_dmorl(self, cases, device=None, simulators=None,
-                          action_mapping=None, stage='dev', obj='uniform'):
-        """
-        Inference loop with:
-          - Dynamic weight selection every `horizon` turns (Phase 2)
-          - Skill-library GPI for action selection
-          - Post-dialogue hint generation (Phase 3)
-        """
-        loguru_logger.warning("[DMORL] Online testing with dynamic weights + hints ...")
-
-        turn_level_results = defaultdict(list)
-        SR = 0.
-        self.model.to(device or self.device)
-        convs = []
-        test_cases = list(zip(cases[:10], simulators))
-
-        for idx, (case, simulator) in tqdm(enumerate(test_cases)):
-            loguru_logger.info(f"\n====== Dialogue {idx} ======")
-
-            # Determine base preference weight for this episode
-            if stage == 'test':
-                if self.model_config.objective_weight is not None:
-                    w = np.array(self.model_config.objective_weight)
-                elif self.model_config.prioritized_objective == "uniform":
-                    w = random_weights(self.model_config.n_objectives, dist="uniform")
-                else:
-                    w = np.array(
-                        self.model_config.obj_to_weight[
-                            self.model_config.prioritized_objective.strip()])
-            else:
-                w = random_weights(self.model_config.n_objectives, dist="uniform")
-
-            state = self.game.reset(case, simulator)
-            state['w'] = w
-            dialogue_history = list(state.get('dialogue_context', []))
-            done = False
-
-            for t in count():
-                # Phase 2: dynamic weight selection + skill-GPI action
-                action, _, _ = self.predict_dynamic(
-                    state, dialogue_history, action_mapping,
-                    is_test=True, step_in_episode=t
-                )
-
-                state, reward, done, _ = self.game.step(
-                    state, action, self.generation_method, simulator
-                )
-
-                dialogue_history = list(state.get('dialogue_context', []))
-
-                if done or t >= self.game_config.max_horizon:
-                    break
-
-            # Outcome classification for hint generation
-            outcome = "success" if done == 1 else ("failure" if done == -1 else "partial_success")
-
-            # Phase 3: post-dialogue refinement
-            self.post_dialogue_refinement(dialogue_history, outcome)
-
-            turn_level_results['turn'].append(t + 1)
-            turn_level_results['outcome'].append(1 if done == 1 else 0)
-            SR += 1 if done == 1 else 0
-            convs.append(copy.deepcopy(dialogue_history))
-
-        n = max(len(test_cases), 1)
-        results = {
-            SUCCESS_RATE: SR / n,
-            'avg_turn': np.mean(turn_level_results['turn']),
-        }
-        loguru_logger.warning(f"[DMORL] Results: {results}")
-
-        for lgr in self.loggers:
-            lgr.record(results, self.ppo_global_step)
-
-        # Save evaluation dialogues when debug mode is active
-        if getattr(self.model_config, "debug", False) and convs:
-            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            out_dir = os.path.join(
-                getattr(self.model_config, "debug_output_dir", "debug_output"),
-                f"eval_dialogues_{ts}",
-            )
-            os.makedirs(out_dir, exist_ok=True)
-            for i, conv in enumerate(convs):
-                with open(os.path.join(out_dir, f"dialogue_{i:04d}.json"), "w", encoding="utf-8") as fh:
-                    json.dump(conv, fh, ensure_ascii=False, indent=2)
-            loguru_logger.info(f"[DMORL DEBUG] Saved {len(convs)} eval dialogues → {out_dir}")
-
-        return results
+        loguru_logger.info("[Curriculum] Phase 1 complete.")
