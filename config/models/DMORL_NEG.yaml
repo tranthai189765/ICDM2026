@@ -21,7 +21,7 @@ num_train_rl_epochs: 10
 train_rl_batch_size: 128
 sampled_times: 50
 freeze_preference_backbone: true
-objective_embedding_size: 6
+objective_embedding_size: 16
 num_train_q_network_epochs: 20
 buffer_length: 2000
 warmup_steps: 30
