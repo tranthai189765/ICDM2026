@@ -8,7 +8,7 @@ from loguru import logger
 from config.constants import DURECDIAL, INSPIRED, CRAIGSLIST_BARGAIN, ES_CONV
 from utils.prompt import get_llm_based_assessment_for_recommendation, get_llm_based_assessment_for_negotiation, \
     get_llm_based_assessment_for_emotional_support, get_toxicity_assessment_for_emotional_support, \
-    get_user_sentiment_for_item_recommendation
+    get_user_sentiment_for_item_recommendation, get_llm_based_price_extraction_for_negotiation
 from config.constants import SUCCESS_RATE, DEAL_RATE, ITEM_FREQ, AVG_TURN, SL_RATIO, FAIRNESS, TOXICITY, USER_REWARD
 
 
@@ -541,8 +541,37 @@ class NegotiationGame(Game):
                         return picked
             return None
 
+        # Optional LLM-based price extraction (CLI: --use_llm_price_extraction).
+        # The agent is the Buyer; when an utterance has several numbers the
+        # regex heuristic can pick the wrong one. If enabled, ask the LLM to
+        # extract the buyer's committed price for PRICE-COMMITTING actions and
+        # use it when it returns a plausible value. Falls back to the heuristic
+        # below on None/implausible output so a flaky LLM never breaks training.
+        llm_price = None
+        if getattr(self.game_config, 'use_llm_price_extraction', False) \
+                and _strategy in _PRICE_COMMITTING:
+            try:
+                llm_price = get_llm_based_price_extraction_for_negotiation(
+                    buyer_utterance=system_response,
+                    seller_price=_seller_p,
+                    buyer_price=_buyer_p,
+                    temperature=0.0,
+                    model_type=self.model_type,
+                )
+            except Exception as e:
+                logger.warning(f"[LLM price extraction] failed: {e}")
+                llm_price = None
+            if llm_price is not None:
+                lo = min(_seller_p, _buyer_p) * 0.5
+                hi = max(_seller_p, _buyer_p) * 1.5
+                if not (lo <= llm_price <= hi):
+                    llm_price = None   # reject implausible LLM output
+
         committed_price = _pick_buyer_price(system_prices)
-        if _strategy in _PRICE_COMMITTING and committed_price is not None:
+        if llm_price is not None:
+            # Trust the LLM-extracted buyer commitment.
+            system_price = llm_price
+        elif _strategy in _PRICE_COMMITTING and committed_price is not None:
             # Real commitment: trust the current utterance's (plausible) offer.
             system_price = committed_price
         else:

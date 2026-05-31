@@ -185,6 +185,9 @@ class NegotiationGameConfig(GameConfig):
     max_horizon = 5
     objectives = [SL_RATIO, FAIRNESS, SUCCESS_RATE]
     n_objectives = len(objectives)
+    # If True, compute_reward delegates buyer price extraction to the LLM
+    # (CLI: --use_llm_price_extraction). Default off → regex heuristic.
+    use_llm_price_extraction = False
     pass
 
 

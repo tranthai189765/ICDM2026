@@ -159,6 +159,12 @@ Configured in `config/models/DMORL_NEG.yaml`:
 | `alpha_rpadpp` | 0.5 | L = (1-α)·L_self + α·L_know |
 | `gamma` | 0.99 | Discount factor |
 
+**Reward-side options** (CLI flags, both `run_dmorl.py` and `eval_dmorl.py`):
+
+| Flag | Effect |
+|---|---|
+| `--use_llm_price_extraction` | Delegate buyer-price extraction in `compute_reward` to the gen LLM (Buyer-aware, disambiguates years/quantities/seller-ask). Falls back to the regex heuristic on a None/implausible LLM reply. |
+
 Anchor weights live in `dmorl_skills_neg.json`.
 
 ---

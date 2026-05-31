@@ -147,6 +147,8 @@ def parse_dmorl_args():
                                help='Mixing weight: L = (1-α)·L_self + α·L_know')
     dmorl_parser.add_argument('--use_active_sampling', action='store_true', default=None,
                                help='Pick highest-regret candidate w for rollout each epoch')
+    dmorl_parser.add_argument('--use_llm_price_extraction', action='store_true', default=False,
+                               help='Use the LLM (gen model) to extract the buyer price in compute_reward')
     dmorl_parser.add_argument('--debug', action='store_true', default=False,
                                help='Print LLM prompts/outputs, per-step rewards/losses, save eval dialogues')
     dmorl_parser.add_argument('--debug_output_dir', type=str, default=None,
@@ -182,6 +184,7 @@ if __name__ == '__main__':
     game_config.set_params({
         'seed': args['seed'],
         'model_type': args['model_type'],
+        'use_llm_price_extraction': dmorl_overrides.get('use_llm_price_extraction', False),
     })
 
     # ── Datasets ──────────────────────────────────────────────────────────────

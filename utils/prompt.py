@@ -1,4 +1,5 @@
 import os
+import re
 import copy
 
 from dotenv import load_dotenv
@@ -409,6 +410,78 @@ def get_llm_based_assessment_for_negotiation(simulated_conversation,
     # convert the text-based assessment to scalar based assessment
     # processing the llm's outputs
     return responses
+
+
+def get_llm_based_price_extraction_for_negotiation(buyer_utterance,
+                                                   seller_price,
+                                                   buyer_price,
+                                                   temperature=0.0,
+                                                   max_tokens=12,
+                                                   model_type='chatgpt'):
+    """
+    Ask the LLM to extract the price the BUYER is committing to in a single
+    utterance. Returns a float price or None (no commitment / not a number).
+
+    The agent in this scenario is the Buyer, so when an utterance mentions
+    several numbers (the buyer's offer, the seller's listing, a model year,
+    a quantity, ...) we want the one the buyer is *offering to pay*. A simple
+    max()/min() heuristic mis-fires; this routine delegates the disambiguation
+    to the LLM.
+
+    :param buyer_utterance: the agent's latest generated utterance (string)
+    :param seller_price:    seller's listed/ask price (for context)
+    :param buyer_price:     buyer's target price (for context)
+    :param model_type:      'chatgpt' | 'fpt' | 'qwen' | 'llama3'
+    :return: float | None
+    """
+    messages = [
+        {"role": "system",
+         "content": "You extract the price a Buyer offers to pay from a single chat message in a price negotiation."},
+        {"role": "user",
+         "content": f"""In this negotiation the Seller lists the item at ${seller_price} and the Buyer's target is around ${buyer_price}.
+Read the Buyer's message below and output ONLY the price (a single number, no currency sign) that the Buyer is offering to pay or agreeing to in THIS message.
+Rules:
+- If the Buyer is rejecting/quoting the seller's price but not offering their own, or makes no price offer, output NONE.
+- Ignore numbers that are model years, quantities, dates, or references to the seller's ask.
+- Output just the number, or the word NONE. No other text.
+
+Examples:
+Buyer message: "I'll pay $200, not your $500."
+Answer: 200
+Buyer message: "This 2007 Honda is nice, I can do 2500."
+Answer: 2500
+Buyer message: "That's too expensive, no thanks."
+Answer: NONE
+
+Buyer message: "{buyer_utterance}"
+Answer:"""}
+    ]
+
+    if model_type == CHATGPT:
+        resp = chat_completion_with_backoff(
+            model=MODEL, messages=messages,
+            temperature=temperature, max_tokens=max_tokens,
+        )
+        out = resp.choices[0]['message']['content']
+    elif model_type == FPT:
+        out = call_fpt_model(messages, temperature, max_tokens, n_return_sequences=1)[0]
+    elif model_type == QWEN:
+        out = call_qwen_model(messages, temperature, max_tokens, n_return_sequences=1)[0]
+    else:
+        out = call_llama3_model(messages, temperature, max_tokens, n_return_sequences=1)[0]
+
+    if out is None:
+        return None
+    out = out.strip()
+    if 'none' in out.lower():
+        return None
+    nums = re.findall(r"[-+]?\d*\.?\d+", out.replace(",", ""))
+    if not nums:
+        return None
+    try:
+        return float(nums[0])
+    except ValueError:
+        return None
 
 
 def get_llm_based_assessment_for_emotional_support(state,

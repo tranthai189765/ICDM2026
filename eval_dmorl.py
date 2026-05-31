@@ -81,6 +81,8 @@ def parse_eval_args():
                        help='Where to write the per-skill JSON + summary.')
     extra.add_argument('--include_advanced', action='store_true',
                        help='Also evaluate the advanced skills in the JSON.')
+    extra.add_argument('--use_llm_price_extraction', action='store_true',
+                       help='Use the LLM (gen model) to extract the buyer price in compute_reward')
     extra_args, _ = extra.parse_known_args(sys.argv[1:])
     return base_args, vars(extra_args)
 
@@ -228,6 +230,7 @@ if __name__ == '__main__':
     game_config.set_params({
         'seed': args['seed'],
         'model_type': args['model_type'],
+        'use_llm_price_extraction': eval_overrides.get('use_llm_price_extraction', False),
     })
 
     # ── Dataset ────────────────────────────────────────────────────────────
