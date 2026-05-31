@@ -101,9 +101,20 @@ Pre-train Q at **7 anchor preferences** that span the simplex:
 | 1 uniform | `[1/3, 1/3, 1/3]` |
 | 3 edge midpoints | `[1/2,1/2,0]`, `[0,1/2,1/2]`, `[1/2,0,1/2]` |
 
-Each episode samples one anchor uniformly. Inside the Q-network update, standard
-PADPP loss is used (random Dirichlet preferences inside `train_rl_step`, no
-GPI envelope override). After training:
+Each episode samples one anchor uniformly. The Q-network update uses the
+**PI (Policy Improvement) branch** of PADPP — i.e. **pure self-learning, no
+GPI envelope, no teacher forcing**:
+
+$$
+\mathcal{L}_{\text{phase1}}(\theta) \;=\; \mathbb{E}\!\left[\,(w^{\top}(r + \gamma(1-d)\, Q_{\text{target}}(s', a^{\star}_{\text{SF}}, w)) - w^{\top} Q(s, a, w; \theta))^2\,\right]
+$$
+
+where $a^{\star}_{\text{SF}}$ is chosen by the successor-feature scorer
+(`cosine × scalar`) under the *current* preference $w$ — no convex envelope
+over past preferences is involved. This matches the PADPP `use_gpi=False`
+branch of `train_rl_step`.
+
+After training:
 
 - Save checkpoint → `dmorl_phase1.pth`
 - Evaluate against the 4 PADPP-paper Table 2 scenarios (uniform + 3 corners)

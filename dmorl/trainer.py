@@ -216,14 +216,25 @@ class DMORLTrainer(PADPPTrainer):
         original_epochs = self.model_config.num_train_rl_epochs
         self.model_config.num_train_rl_epochs = self.model_config.n_skill_train_epochs
 
-        self._run_curriculum_rlt(
-            cases, device, simulators, action_mapping,
-            skill_weights=basic_weights, skill_names=skill_names, p_skill=1.0,
-            phase="phase1", skill_name="anchor",
-        )
+        # Phase 1 is PURE self-learning (DDQN/PI), no GPI envelope in the loss.
+        # Force use_gpi=False so train_rl_step takes the PI branch:
+        #   loss = MSE(w·Q1, w·(r + γ·Q_next_target))
+        # where Q_next_target comes from successor-feature scoring under the
+        # *current* preference (no convex envelope over past w's).
+        original_use_gpi = self.model_config.use_gpi
+        self.model_config.use_gpi = False
 
-        self.model_config.num_train_rl_epochs = original_epochs
-        loguru_logger.info("[DMORL Phase-1] Anchor curriculum training complete.")
+        try:
+            self._run_curriculum_rlt(
+                cases, device, simulators, action_mapping,
+                skill_weights=basic_weights, skill_names=skill_names, p_skill=1.0,
+                phase="phase1", skill_name="anchor",
+            )
+        finally:
+            self.model_config.num_train_rl_epochs = original_epochs
+            self.model_config.use_gpi = original_use_gpi
+
+        loguru_logger.info("[DMORL Phase-1] Anchor curriculum training complete (self-learning only, no GPI).")
 
         # Save Phase 1 checkpoint
         saved_dir = getattr(self.model_config, "saved_dir", "checkpoints")
