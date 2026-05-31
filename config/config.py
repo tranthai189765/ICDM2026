@@ -188,6 +188,9 @@ class NegotiationGameConfig(GameConfig):
     # If True, compute_reward delegates buyer price extraction to the LLM
     # (CLI: --use_llm_price_extraction). Default off → regex heuristic.
     use_llm_price_extraction = False
+    # If True, the buyer/seller LLMs append a [[PRICE: x]] tag to every reply
+    # and compute_reward parses the buyer tag directly (CLI: --use_price_tag).
+    use_price_tag = False
     pass
 
 

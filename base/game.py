@@ -373,7 +373,13 @@ class NegotiationGame(Game):
             "goal": goal,  # will not affect anything, only including it for coding convenience
             "response": "",  # will not affect anything, only including it for coding convenience
             "pre_goals": [''],
-            "pre_topics": ['']
+            "pre_topics": [''],
+            # Price-tag protocol flag (CLI: --use_price_tag). Read by the buyer
+            # generation prompt and the seller simulator to append a price tag.
+            "use_price_tag": getattr(self.game_config, 'use_price_tag', False),
+            # Latest declared prices parsed from the price tags (filled in step()).
+            "_buyer_declared_price": None,
+            "_seller_declared_price": None,
         }
         return state
 
@@ -395,11 +401,29 @@ class NegotiationGame(Game):
         # generate the system response
         system_response = generation_model.generate_response(state)
 
+        # Price-tag protocol: parse the buyer's declared price from the tag and
+        # strip the tag before the utterance is stored / shown to the seller.
+        # (No-op outside negotiation, where state has no 'use_price_tag' key.)
+        if state.get('use_price_tag'):
+            from utils.generation import extract_price_tag, strip_price_tag
+            _buyer_price = extract_price_tag(system_response)
+            if _buyer_price is not None:
+                state['_buyer_declared_price'] = _buyer_price
+            system_response = strip_price_tag(system_response)
+
         # update the dialogue context
         state['dialogue_context'].append({"role": "assistant", "content": system_response})
 
         # generate user response with LLM
         user_response = simulator.respond(state)
+
+        # Price-tag protocol: parse the seller's declared price and strip tag.
+        if state.get('use_price_tag'):
+            from utils.generation import extract_price_tag, strip_price_tag
+            _seller_price = extract_price_tag(user_response)
+            if _seller_price is not None:
+                state['_seller_declared_price'] = _seller_price
+            user_response = strip_price_tag(user_response)
 
         # construct the new state
         # prepend the system and user reponse to the dialogue context
@@ -567,8 +591,25 @@ class NegotiationGame(Game):
                 if not (lo <= llm_price <= hi):
                     llm_price = None   # reject implausible LLM output
 
+        # Price-tag protocol (CLI: --use_price_tag): the buyer declared its
+        # current price via a machine tag parsed in step(). _buyer_declared_price
+        # holds the MOST RECENT declared buyer price (it persists across turns
+        # where the buyer named no price, acting as the prior anchor). This is
+        # the most reliable source, so it takes priority.
+        tag_price = None
+        if state.get('use_price_tag'):
+            tag_price = state.get('_buyer_declared_price')
+            if tag_price is not None:
+                lo = min(_seller_p, _buyer_p) * 0.5
+                hi = max(_seller_p, _buyer_p) * 1.5
+                if not (lo <= tag_price <= hi):
+                    tag_price = None
+
         committed_price = _pick_buyer_price(system_prices)
-        if llm_price is not None:
+        if tag_price is not None:
+            # Trust the buyer's declared price tag.
+            system_price = tag_price
+        elif llm_price is not None:
             # Trust the LLM-extracted buyer commitment.
             system_price = llm_price
         elif _strategy in _PRICE_COMMITTING and committed_price is not None:
@@ -777,11 +818,29 @@ class EmotionalSupportGame(Game):
         # generate the system response
         system_response = generation_model.generate_response(state)
 
+        # Price-tag protocol: parse the buyer's declared price from the tag and
+        # strip the tag before the utterance is stored / shown to the seller.
+        # (No-op outside negotiation, where state has no 'use_price_tag' key.)
+        if state.get('use_price_tag'):
+            from utils.generation import extract_price_tag, strip_price_tag
+            _buyer_price = extract_price_tag(system_response)
+            if _buyer_price is not None:
+                state['_buyer_declared_price'] = _buyer_price
+            system_response = strip_price_tag(system_response)
+
         # update the dialogue context
         state['dialogue_context'].append({"role": "assistant", "content": system_response})
 
         # generate user response with LLM
         user_response = simulator.respond(state)
+
+        # Price-tag protocol: parse the seller's declared price and strip tag.
+        if state.get('use_price_tag'):
+            from utils.generation import extract_price_tag, strip_price_tag
+            _seller_price = extract_price_tag(user_response)
+            if _seller_price is not None:
+                state['_seller_declared_price'] = _seller_price
+            user_response = strip_price_tag(user_response)
 
         # construct the new state
         # prepend the system and user reponse to the dialogue context

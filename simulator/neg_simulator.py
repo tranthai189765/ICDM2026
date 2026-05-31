@@ -3,6 +3,7 @@ import time
 from loguru import logger
 from base.simulator import Simulator
 from utils.prompt import call_llm
+from utils.generation import PRICE_TAG_INSTRUCTION_SELLER
 
 
 class NegotiationSimulator(Simulator):
@@ -87,13 +88,14 @@ class NegotiationSimulator(Simulator):
         messages.extend(self.reformat_dialogue_context(dialogue_context))
         
         # COT thinking to respond
+        tag_instruction = PRICE_TAG_INSTRUCTION_SELLER if state.get('use_price_tag') else ""
         messages.append(
             {'role': 'user', 'content': f"""Based on the given task background and conversation history,
-             first consider the price proposed by the Buyer and your desired price of {initial_price}. 
-             Then determining if the proposed price is acceptable. 
+             first consider the price proposed by the Buyer and your desired price of {initial_price}.
+             Then determining if the proposed price is acceptable.
              If yes, please accept the offer by the Buyer.
-             if no, please select an appropriate strategy and respond the Buyer accordingly. 
-             You have to reply with only one short and succinct sentence.
+             if no, please select an appropriate strategy and respond the Buyer accordingly.
+             You have to reply with only one short and succinct sentence.{tag_instruction}
             """
              }
         )

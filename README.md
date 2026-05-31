@@ -163,7 +163,10 @@ Configured in `config/models/DMORL_NEG.yaml`:
 
 | Flag | Effect |
 |---|---|
-| `--use_llm_price_extraction` | Delegate buyer-price extraction in `compute_reward` to the gen LLM (Buyer-aware, disambiguates years/quantities/seller-ask). Falls back to the regex heuristic on a None/implausible LLM reply. |
+| `--use_price_tag` | Buyer and seller LLMs append a machine tag `[[PRICE: x]]` (or `[[PRICE: NONE]]`) stating the exact price they offer/accept this turn. `compute_reward` parses the buyer tag directly — no extra LLM call, no regex guessing. The tag is stripped before the utterance is stored/shown. Recommended. |
+| `--use_llm_price_extraction` | Delegate buyer-price extraction in `compute_reward` to a separate gen-LLM call. Disambiguates years/quantities/seller-ask. Slower (one extra call per price turn). Falls back to the regex heuristic on a None/implausible reply. |
+
+Price-source priority in `compute_reward`: `--use_price_tag` tag → `--use_llm_price_extraction` result → regex heuristic (lowest plausible buyer number) → prior anchor → seller listing.
 
 Anchor weights live in `dmorl_skills_neg.json`.
 

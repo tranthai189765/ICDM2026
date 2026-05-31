@@ -83,6 +83,8 @@ def parse_eval_args():
                        help='Also evaluate the advanced skills in the JSON.')
     extra.add_argument('--use_llm_price_extraction', action='store_true',
                        help='Use the LLM (gen model) to extract the buyer price in compute_reward')
+    extra.add_argument('--use_price_tag', action='store_true',
+                       help='Buyer/seller LLMs append a [[PRICE: x]] tag; compute_reward parses it directly')
     extra_args, _ = extra.parse_known_args(sys.argv[1:])
     return base_args, vars(extra_args)
 
@@ -231,6 +233,7 @@ if __name__ == '__main__':
         'seed': args['seed'],
         'model_type': args['model_type'],
         'use_llm_price_extraction': eval_overrides.get('use_llm_price_extraction', False),
+        'use_price_tag': eval_overrides.get('use_price_tag', False),
     })
 
     # ── Dataset ────────────────────────────────────────────────────────────

@@ -7,6 +7,61 @@ from loguru import logger
 from config.constants import *
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Price-tag protocol (CLI: --use_price_tag)
+#
+# Instead of regex-guessing the buyer/seller price out of a free-form
+# utterance, we ask the speaking LLM to append a machine-readable tag that
+# states the exact price it is offering/accepting right now. We then parse
+# that tag deterministically. The tag is stripped before the utterance is
+# shown to the other party / stored in the dialogue context.
+# ─────────────────────────────────────────────────────────────────────────────
+
+PRICE_TAG_RE = re.compile(r"\[\[\s*PRICE\s*:\s*([0-9]*\.?[0-9]+|NONE)\s*\]\]",
+                          re.IGNORECASE)
+
+PRICE_TAG_INSTRUCTION_BUYER = (
+    " IMPORTANT: at the very end of your reply append a machine tag stating the "
+    "exact price (digits only, no $) you are offering or accepting RIGHT NOW, in "
+    "the exact format [[PRICE: <amount>]]. If you are not naming any price in this "
+    "message, append [[PRICE: NONE]] instead."
+)
+
+PRICE_TAG_INSTRUCTION_SELLER = (
+    " IMPORTANT: at the very end of your reply append a machine tag stating the "
+    "exact price (digits only, no $) you are asking for or accepting RIGHT NOW, in "
+    "the exact format [[PRICE: <amount>]]. If you are not naming any price in this "
+    "message, append [[PRICE: NONE]] instead."
+)
+
+
+def extract_price_tag(text):
+    """Return the float price declared in a [[PRICE: x]] tag, or None.
+
+    None is returned both when the tag is absent and when it reads NONE.
+    The LAST tag in the text wins (in case the model emitted several).
+    """
+    if not text:
+        return None
+    matches = PRICE_TAG_RE.findall(text)
+    if not matches:
+        return None
+    last = matches[-1].strip()
+    if last.upper() == "NONE":
+        return None
+    try:
+        return float(last)
+    except ValueError:
+        return None
+
+
+def strip_price_tag(text):
+    """Remove every [[PRICE: x]] tag (and trailing whitespace) from text."""
+    if not text:
+        return text
+    return PRICE_TAG_RE.sub("", text).strip()
+
+
 def convert_list_to_str(knowledge):
     """
     function that convert a list of 3 elements to a text string
@@ -331,6 +386,10 @@ def construct_prompt_for_chat_gpt_response_generation_negotiation(state, prompt)
                                                                state['task_background']['buyer_price'],
                                                                state['task_background']['buyer_item_description'],
                                                                goal_description)
+    # Price-tag protocol: ask the buyer to declare its price in a fixed tag so
+    # compute_reward can parse it deterministically (CLI: --use_price_tag).
+    if state.get('use_price_tag'):
+        goal_description = goal_description + PRICE_TAG_INSTRUCTION_BUYER
     return new_prompt, goal_description
 
 
