@@ -432,9 +432,13 @@ class NegotiationGame(Game):
         goal = action
         # compute the llm-basd assessment
         t = time.time()
+        # BUGFIX (#2): temperature 1.1 made the NLI deal-judge stochastic, so
+        # neg_sr (the deal_rate reward component AND the terminal trigger) was
+        # noisy across identical dialogues. Use temperature=0.0 so the judge is
+        # deterministic — stable reward signal and reproducible terminations.
         responses = get_llm_based_assessment_for_negotiation(simulated_conversation=state['dialogue_context'],
                                                              n=self.game_config.n,
-                                                             temperature=1.1,
+                                                             temperature=0.0,
                                                              model_type=self.model_type,
                                                              max_tokens=10
                                                              )
@@ -469,7 +473,9 @@ class NegotiationGame(Game):
                 rewards.append(reward)
 
         # deal rate
-        neg_sr = sum(deals) / len(deals)
+        # Guard against an all-ambiguous judge batch (no response contained
+        # 'have not'/'have reached'); previously this raised ZeroDivisionError.
+        neg_sr = sum(deals) / len(deals) if len(deals) > 0 else 0.0
         # # computing the negotiation success rate and fairness score
         # if neg_sr < self.game_config.epsilon:
         #     sl_ratio = 0.0
@@ -487,6 +493,33 @@ class NegotiationGame(Game):
         # Resolve action strategy for non-tuple actions.
         _strategy = action[0] if isinstance(action, tuple) else action
 
+        _seller_p = float(state['task_background']['seller_price'])
+        _buyer_p = float(state['task_background']['buyer_price'])
+
+        # BUGFIX (#1): the agent is the BUYER, who wants a LOW price, yet the
+        # old code did `max(system_prices)`. When the utterance mentioned both
+        # the agent's offer and the seller's ask (e.g. "I'll pay $200, not your
+        # $500"), max() picked the SELLER's $500 and zeroed out the agent's
+        # gain — a strong wrong-direction reward signal. Worse, stray numbers
+        # (model years like 2007, quantities, etc.) leaked in and produced
+        # nonsense prices. We now (a) filter to PLAUSIBLE prices inside a band
+        # around the buyer/seller range, then (b) pick the LOWEST plausible
+        # one — the buyer's actual offer.
+        def _pick_buyer_price(price_strs):
+            lo = min(_seller_p, _buyer_p) * 0.5
+            hi = max(_seller_p, _buyer_p) * 1.5
+            plausible = []
+            for p in price_strs:
+                try:
+                    val = float(p)
+                except ValueError:
+                    continue
+                if lo <= val <= hi:
+                    plausible.append(val)
+            if not plausible:
+                return None
+            return min(plausible)
+
         # Only PRICE-COMMITTING actions credit the current utterance's price
         # as the system anchor. For all other actions, the number that
         # appears in the utterance is REFERENTIAL (e.g. agent says
@@ -503,21 +536,23 @@ class NegotiationGame(Game):
                         r"[-+]?\d*\.?\d+",
                         (prev_turn.get('content') or '').replace(",", "")
                     )
-                    if prev_prices:
-                        return max(prev_prices)
+                    picked = _pick_buyer_price(prev_prices)
+                    if picked is not None:
+                        return picked
             return None
 
-        if _strategy in _PRICE_COMMITTING and len(system_prices) > 0:
-            # Real commitment: trust the current utterance's price.
-            system_price = max(system_prices)
+        committed_price = _pick_buyer_price(system_prices)
+        if _strategy in _PRICE_COMMITTING and committed_price is not None:
+            # Real commitment: trust the current utterance's (plausible) offer.
+            system_price = committed_price
         else:
             # Non-committing action (deny, disagree, inquire, walk_away,
             # inform, affirm, greet, confirm, counter-noprice) OR price-
-            # committing action with no extractable price (LLM forgot the
-            # number). Use the most recent real anchor.
+            # committing action with no extractable plausible price. Use the
+            # most recent real anchor.
             system_price = _scan_prior_anchor()
             if system_price is None:
-                system_price = state['task_background']['seller_price']
+                system_price = _seller_p
 
         system_price = float(system_price)
 
@@ -526,8 +561,7 @@ class NegotiationGame(Game):
         # an annotation artifact). In those cases the standard sl_ratio formula
         # produces nonsensical values and a few outlier episodes drag down the
         # average r_gain by 0.05-0.10. Treat them as a neutral outcome.
-        _seller_p = float(state['task_background']['seller_price'])
-        _buyer_p = float(state['task_background']['buyer_price'])
+        # (_seller_p / _buyer_p are defined above, near the price extraction.)
         # ALSO clamp the case where the LLM hallucinated a price ABOVE the
         # seller's listing (e.g. counter,2 prompted to say bin 2 price = $220
         # but LLM echoed seller's $580 instead). Without the clamp this gives
@@ -593,9 +627,20 @@ class NegotiationGame(Game):
         #     else:
         #         fairness_score = 1.0
 
+        # BUGFIX (#4): walk_away is an explicit decision to abandon the deal,
+        # but previously it left done=0 (NLI said "have not"), forcing the
+        # agent to keep talking after it had quit. Make walk_away a hard
+        # FAILURE terminal and zero out price/deal rewards (no commitment was
+        # made). This removes wasted post-quit turns and their noisy rewards.
+        if _strategy == 'walk_away':
+            logger.info('--> Agent walked away (hard terminal).')
+            sl_ratio = 0.0
+            fairness = 0.0
+            neg_sr = 0.0
+            done = -1
         # checking if there is a deal
         # that mean the neg_sr should be greater than a predefined threshold
-        if neg_sr >= self.game_config.epsilon:
+        elif neg_sr >= self.game_config.epsilon:
             logger.info('--> Terminated conversation !')
             done = 1
         # other cases
