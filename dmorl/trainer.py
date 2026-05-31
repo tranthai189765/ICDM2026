@@ -294,9 +294,12 @@ class DMORLTrainer(PADPPTrainer):
         self.model_config.num_train_rl_epochs = self.model_config.n_advanced_train_epochs
 
         adv_names = [s["name"] for s in advanced_skills]
+        # p_skill=1.0 ⇒ every Phase-1b episode is trained on an advanced skill
+        # weight (no random-weight branch). With a single uniform advanced skill
+        # [1/3, 1/3, 1/3] this matches PADPP Table 2's Uniform row exactly.
         self._run_curriculum_rlt(cases, device, simulators, action_mapping,
                                  skill_weights=adv_weights, skill_names=adv_names,
-                                 p_skill=0.6,
+                                 p_skill=1.0,
                                  phase="1b", skill_name="advanced")
 
         self.model_config.num_train_rl_epochs = original_epochs
