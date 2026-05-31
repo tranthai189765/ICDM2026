@@ -306,9 +306,21 @@ class DMORLTrainer(PADPPTrainer):
         basic_skills = self.dmorl_controller.skill_library.basic_skills
         envelope_weights = [s["weight_vector"] for s in basic_skills]
         self._gpi_skill_envelope = torch.FloatTensor(envelope_weights).to(self.device)
+
+        # Self-Bellman: each Phase-1b update ALSO gets a vanilla TD term at the
+        # advanced student preference (greedy argmax target under w_self, no
+        # GPI envelope). Total inner-loop loss = loss_teacher + loss_self.
+        adv_weight_tensor = torch.FloatTensor(adv_weights).to(self.device)
+        self._self_bellman_preference = adv_weight_tensor[0:1]   # [1, n_obj]
+        self._extra_td_loss_hook = self._compute_self_bellman_loss
+
         loguru_logger.info(
             f"[DMORL Phase-1b] GPI teacher forcing envelope (basic skills only) "
             f"= {envelope_weights}"
+        )
+        loguru_logger.info(
+            f"[DMORL Phase-1b] Self-Bellman preference (student) "
+            f"= {adv_weight_tensor[0].tolist()}"
         )
 
         try:
@@ -319,6 +331,8 @@ class DMORLTrainer(PADPPTrainer):
         finally:
             # Always clear so later phases / eval revert to PADPP default
             self._gpi_skill_envelope = None
+            self._self_bellman_preference = None
+            self._extra_td_loss_hook = None
 
         self.model_config.num_train_rl_epochs = original_epochs
         loguru_logger.info("[DMORL Phase-1b] Advanced skill training complete.")
@@ -329,6 +343,67 @@ class DMORLTrainer(PADPPTrainer):
         ckpt_path = os.path.join(saved_dir, "dmorl_phase1b.pth")
         self.save_model(ckpt_path)
         loguru_logger.info(f"[DMORL Phase-1b] Checkpoint saved → {ckpt_path}")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Self-Bellman loss for Phase 1b (advanced student, no GPI envelope)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _compute_self_bellman_loss(self, batch, batch_act, rewards, batch_done):
+        """
+        Vanilla TD loss at the advanced student preference w_self = [1/3,1/3,1/3].
+        Target action a* = argmax_a (w_self · Q_target(s', a)).
+        Same α-weighted scalar + vector MSE as the main GPI term, but with a
+        single preference and no convex envelope over teachers.
+
+        Called per inner mini-batch by PADPP train_rl_step when
+        self._extra_td_loss_hook is set.
+        """
+        w_self = self._self_bellman_preference   # [1, n_obj]
+        n_obj  = self.model_config.n_objectives
+        alpha  = self.model_config.alpha
+        gamma  = self.model_config.gamma
+
+        self.model.train()
+
+        # State / next-state representations under the advanced preference
+        state, next_state, w_embedding = self.model.compute_state_resp(batch, w_self)
+        bs = state.size(0)
+
+        # w_embedding is [1, w_dim] (n_pref=1) → broadcast to [bs, w_dim]
+        w_embedding = w_embedding.repeat(1, bs).view(-1, w_embedding.size(-1))
+
+        # Q(s, a, w_self)
+        feature = torch.cat([state, w_embedding], dim=-1)
+        Q_all = self.model.actor(feature)                      # [bs, n_a*n_obj]
+        action_size = Q_all.view(Q_all.size(0), -1, n_obj).size(1)
+        Q_all = Q_all.view(Q_all.size(0), -1, n_obj)           # [bs, n_a, n_obj]
+        Q1 = Q_all.gather(
+            1, batch_act.view(-1, 1, 1).expand(bs, 1, n_obj)
+        ).view(-1, n_obj)                                       # [bs, n_obj]
+
+        # Greedy target action under w_self at next state
+        with torch.no_grad():
+            next_feature = torch.cat([next_state, w_embedding], dim=-1)
+            Q_next = self.target_model.actor(next_feature).detach()
+            Q_next = Q_next.view(-1, action_size, n_obj)        # [bs, n_a, n_obj]
+            scalarized = (w_self.view(1, 1, n_obj) * Q_next).sum(dim=-1)  # [bs, n_a]
+            best_a = scalarized.max(1)[1]                       # [bs]
+            Q_next_target = Q_next.gather(
+                1, best_a.view(-1, 1, 1).expand(bs, 1, n_obj)
+            ).squeeze(1)                                        # [bs, n_obj]
+
+        # Bellman target
+        dones = batch_done.view(-1, 1)                          # [bs, 1]
+        TQ = rewards + gamma * (1 - dones) * Q_next_target      # [bs, n_obj]
+
+        # α-weighted scalar + vector MSE under w_self
+        w_batch = w_self.expand(bs, n_obj)
+        wQ  = (w_batch * Q1).sum(dim=-1)                        # [bs]
+        wTQ = (w_batch * TQ).sum(dim=-1)                        # [bs]
+
+        loss = alpha * F.mse_loss(wQ, wTQ, reduction='mean')
+        loss = loss + (1.0 - alpha) * F.mse_loss(Q1, TQ, reduction='mean')
+        return loss
 
     # ─────────────────────────────────────────────────────────────────────────
     # Internal: Curriculum RLT (shared by Phase 1a and 1b)

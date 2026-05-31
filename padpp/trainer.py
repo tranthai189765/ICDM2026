@@ -442,6 +442,11 @@ class PADPPTrainer(Trainer):
 
             # loop over the train loader
             for batch in train_loader:
+                # Save original (un-reshaped) rewards/dones for any extra loss
+                # hook (e.g. DMORL Phase-1b self-Bellman): the GPI block below
+                # mutates `rewards` in-place to [K*bs, n_obj].
+                _orig_rewards = rewards.clone()
+                _orig_dones = batch_done.clone()
                 # sample a batch of preference weights
                 # sampled preferences from the memory buffer
                 # sampled_preferences = random.choices(self.preference_memory, k=self.model_config.n_preferences)
@@ -666,6 +671,14 @@ class PADPPTrainer(Trainer):
                         F.mse_loss(wQ.view(-1), wTQ.view(-1), reduction='mean')
                     loss += (1 - self.model_config.alpha) * \
                         F.mse_loss(Q1.view(-1), TQ.view(-1), reduction='mean')
+
+                # Optional extra TD loss (e.g. DMORL Phase-1b self-Bellman at
+                # the advanced skill preference, on top of GPI teacher forcing).
+                extra_hook = getattr(self, '_extra_td_loss_hook', None)
+                if extra_hook is not None:
+                    loss = loss + extra_hook(
+                        batch, batch_act, _orig_rewards, _orig_dones
+                    )
 
                 # update the parameters of actor and critic
                 optimizer.zero_grad()
