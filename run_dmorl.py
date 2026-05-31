@@ -128,6 +128,10 @@ def parse_dmorl_args():
     dmorl_parser.add_argument('--force_rediscover_skills', action='store_true')
     dmorl_parser.add_argument('--phase1a_only', action='store_true', default=False,
                                help='Stop after Phase 1a and save checkpoint (for isolated testing)')
+    dmorl_parser.add_argument('--phase1b_only', action='store_true', default=False,
+                               help='Skip SFT + Phase 1a (load dmorl_phase1a.pth), run Phase 1b only, then online eval')
+    dmorl_parser.add_argument('--skip_phase2', action='store_true', default=False,
+                               help='Skip Phase 2 (full PADPP RLT generalisation) after Phase 1b')
     dmorl_parser.add_argument('--debug', action='store_true', default=False,
                                help='Print LLM prompts/outputs, per-step rewards/losses, save eval dialogues')
     dmorl_parser.add_argument('--debug_output_dir', type=str, default=None,
@@ -267,6 +271,15 @@ if __name__ == '__main__':
                     dmorl_params['run_sft'] = False
                 if dmorl_overrides.get('skip_offline_eval'):
                     dmorl_params['run_offline_eval'] = False
+                # --phase1b_only: skip SFT + offline eval + Phase 1a, then load
+                # dmorl_phase1a.pth and run Phase 1b. Implies --skip_phase2.
+                if dmorl_overrides.get('phase1b_only'):
+                    dmorl_params['run_sft'] = False
+                    dmorl_params['run_offline_eval'] = False
+                    dmorl_params['phase1b_only'] = True
+                    dmorl_params['skip_phase2'] = True
+                if dmorl_overrides.get('skip_phase2'):
+                    dmorl_params['skip_phase2'] = True
                 model_config.set_params(dmorl_params)
 
             model = model_class(model_config)

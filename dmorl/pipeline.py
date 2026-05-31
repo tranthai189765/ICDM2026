@@ -130,27 +130,64 @@ class DMORLPipeline(PADPPPipeline):
 
         if self.model_config.run_rlt:
             self.trainer.global_step = 0
-            self.load_pretrained_model(is_rl=False)
+
+            phase1b_only = getattr(self.model_config, "phase1b_only", False)
+
+            if phase1b_only:
+                # Load existing Phase 1a checkpoint and skip Phase 1a entirely.
+                saved_dir = getattr(self.model_config, "saved_dir", "checkpoints")
+                phase1a_ckpt = os.path.join(saved_dir, "dmorl_phase1a.pth")
+                if not os.path.exists(phase1a_ckpt):
+                    raise FileNotFoundError(
+                        f"[DMORL phase1b_only] Phase 1a checkpoint not found at "
+                        f"{phase1a_ckpt}. Run Phase 1a first or pass --phase1a_only."
+                    )
+                logger.info(f"[DMORL phase1b_only] Loading Phase 1a checkpoint → {phase1a_ckpt}")
+                self.trainer.load_model(phase1a_ckpt)
+                self.model = self.trainer.model
+            else:
+                self.load_pretrained_model(is_rl=False)
 
             # Phase 0: initialise skill library
             self._init_dmorl_controller()
 
             if self.model_config.run_curriculum:
-                logger.info("[DMORL] Phase 1a: Basic skill curriculum ...")
-                self.run_basic_skills()
+                if not phase1b_only:
+                    logger.info("[DMORL] Phase 1a: Basic skill curriculum ...")
+                    self.run_basic_skills()
 
-                if getattr(self.model_config, "phase1a_only", False):
-                    logger.info("[DMORL] phase1a_only=True — stopping after Phase 1a.")
-                    return offline_eval_results, None
+                    if getattr(self.model_config, "phase1a_only", False):
+                        logger.info("[DMORL] phase1a_only=True — stopping after Phase 1a.")
+                        return offline_eval_results, None
+                else:
+                    logger.info("[DMORL] phase1b_only=True — skipping Phase 1a.")
 
                 logger.info("[DMORL] Phase 1b: Advanced skill training ...")
                 self.run_advanced_skills()
 
-            logger.info("[DMORL] Phase 2: Full PADPP RLT (generalisation) ...")
-            self.run_rlt()
+            if getattr(self.model_config, "skip_phase2", False):
+                logger.info("[DMORL] skip_phase2=True — skipping Phase 2 (PADPP RLT).")
+            else:
+                logger.info("[DMORL] Phase 2: Full PADPP RLT (generalisation) ...")
+                self.run_rlt()
 
         if self.model_config.run_online_eval:
-            self.load_pretrained_model(is_rl=True)
+            # If Phase 2 was skipped, eval the Phase 1b checkpoint directly
+            # (rl_model.pth does not exist in that case).
+            if getattr(self.model_config, "skip_phase2", False):
+                saved_dir = getattr(self.model_config, "saved_dir", "checkpoints")
+                phase1b_ckpt = os.path.join(saved_dir, "dmorl_phase1b.pth")
+                if not os.path.exists(phase1b_ckpt):
+                    raise FileNotFoundError(
+                        f"[DMORL] Phase 1b checkpoint not found at {phase1b_ckpt}. "
+                        f"Cannot run online eval."
+                    )
+                logger.info(f"[DMORL] Loading Phase 1b checkpoint for eval → {phase1b_ckpt}")
+                self.trainer.load_model(phase1b_ckpt)
+                self.model = self.trainer.model
+            else:
+                self.load_pretrained_model(is_rl=True)
+
             logger.info("[DMORL] Running online evaluation ...")
             if not isinstance(self.trainer.generation_method, BARTGeneration):
                 self.trainer.generation_method.generation_config.set_params(

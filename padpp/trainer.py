@@ -996,11 +996,6 @@ class PADPPTrainer(Trainer):
                     logits = torch.bmm(logits, w_gpi.permute(0, 2, 1))
                     logits = logits.max(dim=0)[0]
                     logits = logits.permute(1, 0)
-                    # mask redundant actions in the GPI path too
-                    action_mask = _build_action_mask(
-                        action_mapping, logits.size(-1), logits.device)
-                    logits = logits.masked_fill(~action_mask.unsqueeze(-1), float('-inf'))
-                    # computing the q value and next q values
                 # Inference
                 else:
                     logits = torch.bmm(logits, batch['w'].unsqueeze(
@@ -1009,6 +1004,8 @@ class PADPPTrainer(Trainer):
 
                 # Mask out semantically-redundant actions (non-price strategies
                 # at topic_idx > 0 collapse to the same generated utterance).
+                # `logits` is shape [1, n_actions] in both GPI and non-GPI paths;
+                # a 1-D mask of size n_actions broadcasts correctly across it.
                 action_mask = _build_action_mask(
                     action_mapping, logits.size(-1), logits.device)
                 logits = logits.masked_fill(~action_mask, float('-inf'))

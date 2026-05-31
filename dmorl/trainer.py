@@ -76,7 +76,11 @@ class TrainingCSVLogger:
         self._reward_f = open(reward_path, "w", newline="", encoding="utf-8")
         self._reward_w = csv.writer(self._reward_f)
         obj_cols = [f"r{i}" for i in range(n_objectives)]
-        self._reward_w.writerow(["epoch", "episode", "step", "phase", "skill", "action", "done"] + obj_cols)
+        w_cols = [f"w{i}" for i in range(n_objectives)]
+        self._reward_w.writerow(
+            ["epoch", "episode", "step", "phase", "skill", "action", "done"]
+            + obj_cols + w_cols + ["weighted_sum"]
+        )
         self._n_obj = n_objectives
 
         loguru_logger.info(f"[DMORL CSV] Writing logs → {loss_path}")
@@ -90,11 +94,32 @@ class TrainingCSVLogger:
             self._loss_f.flush()
 
     def log_reward(self, epoch: int, episode: int, step: int,
-                   phase: str, skill: str, action, rewards, done: int) -> None:
+                   phase: str, skill: str, action, rewards, done: int,
+                   weight=None) -> None:
         if not isinstance(rewards, list):
             rewards = [rewards]
-        obj_vals = [f"{float(r):.6f}" for r in rewards[:self._n_obj]]
-        self._reward_w.writerow([epoch, episode, step, phase, skill, str(action), done] + obj_vals)
+        r_vec = [float(r) for r in rewards[:self._n_obj]]
+        # Pad short reward vectors with zeros so columns line up
+        if len(r_vec) < self._n_obj:
+            r_vec = r_vec + [0.0] * (self._n_obj - len(r_vec))
+
+        if weight is None:
+            w_vec = [float("nan")] * self._n_obj
+            weighted_sum = float("nan")
+        else:
+            w_list = list(weight) if hasattr(weight, "__iter__") else [weight]
+            w_vec = [float(x) for x in w_list[:self._n_obj]]
+            if len(w_vec) < self._n_obj:
+                w_vec = w_vec + [0.0] * (self._n_obj - len(w_vec))
+            weighted_sum = float(np.dot(w_vec, r_vec))
+
+        obj_vals = [f"{v:.6f}" for v in r_vec]
+        w_vals = [f"{v:.6f}" for v in w_vec]
+        ws_val = f"{weighted_sum:.6f}" if not math.isnan(weighted_sum) else "nan"
+        self._reward_w.writerow(
+            [epoch, episode, step, phase, skill, str(action), done]
+            + obj_vals + w_vals + [ws_val]
+        )
         self._reward_f.flush()
 
     def close(self) -> None:
@@ -372,6 +397,7 @@ class DMORLTrainer(PADPPTrainer):
                         epoch=train_step, episode=episode_counter, step=t,
                         phase=phase, skill=current_skill,
                         action=action, rewards=r_list, done=done_flag,
+                        weight=w,
                     )
 
                     if getattr(self.model_config, "debug", False):
