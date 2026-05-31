@@ -1,0 +1,122 @@
+"""Run H-MOD buyer-agent drift evaluation.
+
+This runner is intentionally separate from run_dmorl.py. It evaluates the new
+seller-drift simulator and H-MOD metrics while preserving the legacy
+PADPP/DMORL buyer-agent role.
+"""
+
+import argparse
+import json
+
+from hmod.runner import run_and_write
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--scenario_file",
+        default="config/scenario/hmod_buyer_drift_scenarios.yaml",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["padpp_static", "hmod_dynamic", "hmod_no_mask"],
+        default="hmod_dynamic",
+    )
+    parser.add_argument("--num_cases", type=int, default=None)
+    parser.add_argument("--output_dir", default="outputs/hmod_eval")
+    parser.add_argument("--audit_sample_size", type=int, default=50)
+    parser.add_argument(
+        "--judge_model",
+        default="rule",
+        help="Use 'rule' for deterministic offline judging, or an existing LLM backend name.",
+    )
+    parser.add_argument(
+        "--use_llm_simulator",
+        action="store_true",
+        help="Use LLM to verbalize buyer responses; deterministic templates are used by default.",
+    )
+    parser.add_argument(
+        "--objective_file",
+        default="config/scenario/hmod_buyer_objectives.py",
+        help=(
+            "Optional Python assignment file defining BUYER_STRATEGY_INTENTS and "
+            "BUYER_STRATEGY_MACRO_CLUSTERS."
+        ),
+    )
+    parser.add_argument(
+        "--objective_id",
+        default=None,
+        help="Optional buyer strategy intent id to apply to all scenarios.",
+    )
+    parser.add_argument(
+        "--reflection_horizon",
+        type=int,
+        default=3,
+        help="Run objective self-reflection and update local W every T buyer turns.",
+    )
+    parser.add_argument(
+        "--controller_mode",
+        choices=["rule_scaffold", "llm_reflection"],
+        default="rule_scaffold",
+        help=(
+            "rule_scaffold keeps the deterministic test path; llm_reflection uses "
+            "the paper path: one NL macro_goal -> LLM-reflected W_t."
+        ),
+    )
+    parser.add_argument(
+        "--llm_model",
+        default=None,
+        help="Optional override. Defaults to DEEPINFRA_MODEL from .env.",
+    )
+    parser.add_argument(
+        "--llm_api_key",
+        default=None,
+        help="Optional override. Defaults to DEEPINFRA_API_KEY from .env.",
+    )
+    parser.add_argument(
+        "--llm_api_key_env",
+        default="DEEPINFRA_API_KEY",
+        help="Environment variable containing the LLM API key.",
+    )
+    parser.add_argument(
+        "--llm_base_url",
+        default=None,
+        help="Optional override. Defaults to DEEPINFRA_BASE_URL from .env.",
+    )
+    parser.add_argument("--llm_temperature", type=float, default=0.0)
+    parser.add_argument("--llm_max_tokens", type=int, default=500)
+    parser.add_argument(
+        "--llm_fallback_to_rule",
+        action="store_true",
+        help="If LLM reflection fails, fall back to rule_scaffold and log llm_error.",
+    )
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    result = run_and_write(
+        scenario_file=args.scenario_file,
+        mode=args.mode,
+        num_cases=args.num_cases,
+        output_dir=args.output_dir,
+        audit_sample_size=args.audit_sample_size,
+        judge_model=args.judge_model,
+        use_llm_simulator=args.use_llm_simulator,
+        objective_file=args.objective_file,
+        objective_id=args.objective_id,
+        reflection_horizon=args.reflection_horizon,
+        controller_mode=args.controller_mode,
+        llm_model=args.llm_model,
+        llm_api_key=args.llm_api_key,
+        llm_api_key_env=args.llm_api_key_env,
+        llm_base_url=args.llm_base_url,
+        llm_temperature=args.llm_temperature,
+        llm_max_tokens=args.llm_max_tokens,
+        llm_fallback_to_rule=args.llm_fallback_to_rule,
+    )
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()

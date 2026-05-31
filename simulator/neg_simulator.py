@@ -127,4 +127,11 @@ class NegotiationSimulator(Simulator):
                           model_type=self.model_type)
         # return the user persona description
         return output[0]
+
+
+# H-MOD buyer-agent evaluation uses a seller simulator with scripted drift.
+# Re-export here for discoverability while keeping the implementation isolated
+# from the legacy PADPP buyer-agent simulator above.
+from hmod.simulator import DynamicSellerNegotiationSimulator  # noqa: E402,F401
+from hmod.simulator import DynamicBuyerNegotiationSimulator  # noqa: E402,F401
     

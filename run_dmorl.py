@@ -77,7 +77,14 @@ _warnings.filterwarnings("ignore", category=UserWarning, module="transformers")
 from dotenv import load_dotenv
 from accelerate import Accelerator, DistributedDataParallelKwargs
 from loguru import logger
-import wandb
+try:
+    import wandb
+except ModuleNotFoundError:
+    class _NoOpWandB:
+        def finish(self):
+            return None
+
+    wandb = _NoOpWandB()
 
 # Redirect loguru to file only (INFO+); removes default stderr handler
 logger.remove()
@@ -138,6 +145,39 @@ def parse_dmorl_args():
                                help='Skip offline evaluation phase')
     dmorl_parser.add_argument('--sampled_times', type=int, default=None,
                                help='Episodes collected per RL epoch (override config, e.g. 5 for fast debug)')
+    dmorl_parser.add_argument('--hmod_enabled', action='store_true', default=None,
+                               help='Use H-MOD buyer-objective controller inside DMORL training')
+    dmorl_parser.add_argument('--hmod_objective_file', type=str, default=None,
+                               help='Python assignment file with BUYER_STRATEGY_INTENTS')
+    dmorl_parser.add_argument('--hmod_objective_id', type=str, default=None,
+                               help='Optional buyer objective id to prioritize for H-MOD')
+    dmorl_parser.add_argument('--hmod_reflection_horizon', type=int, default=None,
+                               help='T: self-reflection horizon for H-MOD dynamic W')
+    dmorl_parser.add_argument('--hmod_phase2_dynamic_training',
+                               action='store_true', default=None,
+                               help='Train H-MOD Phase 2 with dynamic W inside episodes')
+    dmorl_parser.add_argument('--no_hmod_phase2_dynamic_training',
+                               dest='hmod_phase2_dynamic_training',
+                               action='store_false')
+    dmorl_parser.add_argument('--hmod_controller_mode',
+                               choices=['rule_scaffold', 'llm_reflection'],
+                               default=None,
+                               help='rule_scaffold for offline tests, llm_reflection for NL objective -> LLM W_t')
+    dmorl_parser.add_argument('--hmod_macro_goal', type=str, default=None,
+                               help='Optional direct natural-language buyer objective for LLM reflection')
+    dmorl_parser.add_argument('--hmod_llm_model', type=str, default=None,
+                               help='Optional override. Defaults to DEEPINFRA_MODEL from .env')
+    dmorl_parser.add_argument('--hmod_llm_api_key', type=str, default=None,
+                               help='Optional override. Defaults to DEEPINFRA_API_KEY from .env')
+    dmorl_parser.add_argument('--hmod_llm_api_key_env', type=str, default=None,
+                               help='Environment variable containing the H-MOD LLM API key')
+    dmorl_parser.add_argument('--hmod_llm_base_url', type=str, default=None,
+                               help='Optional override. Defaults to DEEPINFRA_BASE_URL from .env')
+    dmorl_parser.add_argument('--hmod_llm_temperature', type=float, default=None)
+    dmorl_parser.add_argument('--hmod_llm_max_tokens', type=int, default=None)
+    dmorl_parser.add_argument('--hmod_llm_fallback_to_rule',
+                               action='store_true', default=None,
+                               help='Fallback to rule_scaffold if LLM reflection fails')
 
     import sys
     dmorl_extra, _ = dmorl_parser.parse_known_args(sys.argv[1:])
@@ -267,6 +307,9 @@ if __name__ == '__main__':
                     dmorl_params['run_sft'] = False
                 if dmorl_overrides.get('skip_offline_eval'):
                     dmorl_params['run_offline_eval'] = False
+                if dmorl_overrides.get('hmod_reflection_horizon') is not None:
+                    dmorl_params['dynamic_weight_horizon'] = dmorl_overrides[
+                        'hmod_reflection_horizon']
                 model_config.set_params(dmorl_params)
 
             model = model_class(model_config)

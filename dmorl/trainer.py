@@ -276,6 +276,125 @@ class DMORLTrainer(PADPPTrainer):
         loguru_logger.info("[DMORL Phase-1b] Advanced skill training complete.")
 
     # ─────────────────────────────────────────────────────────────────────────
+    # H-MOD Phase 2: Dynamic objective-conditioned RLT
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def train_hmod_phase2(self, cases, dev_cases=None, device=None,
+                          simulators=None, dev_simulators=None,
+                          action_mapping=None):
+        """Train Phase 2 with H-MOD dynamic W updates inside each episode.
+
+        Unlike the PADPP Phase 2 random-simplex RLT, this phase calls the
+        controller every `dynamic_weight_horizon` turns and stores transitions
+        under the reflected W. The action selection path still uses the
+        DMORLModel skill-library GPI when available.
+        """
+        if not self.dmorl_controller:
+            loguru_logger.warning("[H-MOD Phase-2] No controller. Falling back to PADPP RLT.")
+            return self.train_rlt(
+                cases=cases,
+                dev_cases=dev_cases,
+                device=device,
+                simulators=simulators,
+                dev_simulators=dev_simulators,
+                action_mapping=action_mapping,
+            )
+
+        loguru_logger.info(
+            f"[H-MOD Phase-2] Dynamic RLT for {self.model_config.num_train_rl_epochs} "
+            f"epochs, reflection horizon={getattr(self.model_config, 'dynamic_weight_horizon', 3)}."
+        )
+        return self._run_hmod_dynamic_rlt(cases, device, simulators, action_mapping)
+
+    def _run_hmod_dynamic_rlt(self, cases, device=None, simulators=None,
+                              action_mapping=None):
+        self.model.to(self.device)
+        max_training_steps = self.model_config.num_train_rl_epochs * int(
+            self.model_config.buffer_length // self.model_config.train_rl_batch_size
+        )
+        optimizer = self.create_optimizer(self.model, self.model_config.actor_learning_rate)
+        scheduler = self.create_scheduler(
+            optimizer,
+            num_warmup_steps=self.model_config.warmup_steps,
+            max_train_steps=max_training_steps,
+        )
+
+        buffer = deque(maxlen=self.model_config.buffer_length)
+        self.memory_buffer = deque(maxlen=self.model_config.preference_buffer_length)
+        episode_counter = 0
+
+        for train_step in range(self.model_config.num_train_rl_epochs):
+            self.model.train()
+            for _ in range(self.model_config.sampled_times):
+                case = np.random.choice(cases)
+                simulator = np.random.choice(simulators)
+                state = self.game.reset(case, simulator)
+                dialogue_history = list(state.get("dialogue_context", []))
+                done = False
+
+                for t in count():
+                    action, _, _ = self.predict_dynamic(
+                        state,
+                        dialogue_history,
+                        action_mapping,
+                        is_test=False,
+                        step_in_episode=t,
+                    )
+                    old_state = copy.deepcopy(state)
+
+                    state, reward, done, _ = self.game.step(
+                        state, action, self.generation_method, simulator
+                    )
+                    dialogue_history = list(state.get("dialogue_context", []))
+
+                    reward = torch.tensor([reward], device=self.device, dtype=torch.float)
+                    old_state["next_state"] = copy.deepcopy(state)
+                    old_state["act"] = action
+
+                    done_flag = 1 if done in (1, -1) else 0
+                    if done == -1:
+                        done = 1
+
+                    buffer.append([old_state, reward, 1, abs(done_flag)])
+
+                    r_list = reward.squeeze().tolist()
+                    if not isinstance(r_list, list):
+                        r_list = [r_list]
+
+                    current_w = old_state.get("w", [])
+                    skill_name = "hmod_dynamic_w:" + ",".join(
+                        f"{float(x):.3f}" for x in current_w
+                    )
+                    self.csv_logger.log_reward(
+                        epoch=train_step,
+                        episode=episode_counter,
+                        step=t,
+                        phase="hmod_phase2",
+                        skill=skill_name,
+                        action=action,
+                        rewards=r_list,
+                        done=done_flag,
+                    )
+
+                    if done:
+                        break
+
+                episode_counter += 1
+
+            if train_step >= 0 and len(buffer) >= self.model_config.train_rl_batch_size:
+                loguru_logger.warning(
+                    f"[H-MOD Phase-2] Epoch {train_step}, updating Q-network ..."
+                )
+                self.train_rl_step(buffer, action_mapping, optimizer, scheduler)
+
+        saved_dir = getattr(self.model_config, "saved_dir", "checkpoints")
+        os.makedirs(saved_dir, exist_ok=True)
+        ckpt_path = os.path.join(saved_dir, "hmod_phase2_dynamic.pth")
+        self.save_model(ckpt_path)
+        loguru_logger.info(f"[H-MOD Phase-2] Checkpoint saved → {ckpt_path}")
+        return None
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Internal: Curriculum RLT (shared by Phase 1a and 1b)
     # ─────────────────────────────────────────────────────────────────────────
 

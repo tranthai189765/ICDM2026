@@ -26,6 +26,7 @@ from padpp.pipeline import (
 )
 from dmorl.llm_controller import DMORLController
 from dmorl.trainer import DMORLTrainer
+from hmod.training import HMODController, HMOD_OBJECTIVE_ORDER
 from utils.game import create_target_set, create_cases
 from text_gen.bart_generation import BARTGeneration
 
@@ -62,27 +63,54 @@ class DMORLPipeline(PADPPPipeline):
     def _init_dmorl_controller(self):
         """Build and attach a DMORLController to the trainer."""
         scenario = self.game_config.name
-        objective_names = SCENARIO_OBJECTIVE_NAMES.get(
-            scenario, [f"obj_{i}" for i in range(self.model_config.n_objectives)]
-        )
+        if getattr(self.model_config, "hmod_enabled", False):
+            objective_names = HMOD_OBJECTIVE_ORDER[: self.model_config.n_objectives]
+        else:
+            objective_names = SCENARIO_OBJECTIVE_NAMES.get(
+                scenario, [f"obj_{i}" for i in range(self.model_config.n_objectives)]
+            )
         objective_descriptions = {
             name: OBJECTIVE_DESCRIPTIONS[name]
             for name in objective_names if name in OBJECTIVE_DESCRIPTIONS
         }
         saved_dir = getattr(self.model_config, "saved_dir", "checkpoints")
         skill_log_file = os.path.join(saved_dir, "skill_discovery.txt")
-        controller = DMORLController(
-            n_objectives=self.model_config.n_objectives,
-            objective_names=objective_names,
-            objective_descriptions=objective_descriptions,
-            scenario=scenario,
-            n_basic_skills=self.model_config.n_basic_skills,
-            n_advanced_skills=self.model_config.n_advanced_skills,
-            dynamic_weight_horizon=self.model_config.dynamic_weight_horizon,
-            skills_file=self.model_config.skills_file,
-            hints_file=self.model_config.hints_file,
-            skill_log_file=skill_log_file,
-        )
+        if getattr(self.model_config, "hmod_enabled", False):
+            controller = HMODController(
+                n_objectives=self.model_config.n_objectives,
+                objective_names=objective_names,
+                scenario=scenario,
+                objective_file=self.model_config.hmod_objective_file,
+                objective_id=self.model_config.hmod_objective_id,
+                n_basic_skills=self.model_config.n_basic_skills,
+                n_advanced_skills=self.model_config.n_advanced_skills,
+                dynamic_weight_horizon=self.model_config.dynamic_weight_horizon,
+                skills_file=self.model_config.skills_file,
+                hints_file=self.model_config.hints_file,
+                skill_log_file=skill_log_file,
+                controller_mode=getattr(self.model_config, "hmod_controller_mode", "rule_scaffold"),
+                macro_goal=getattr(self.model_config, "hmod_macro_goal", None),
+                llm_model=getattr(self.model_config, "hmod_llm_model", None),
+                llm_api_key=getattr(self.model_config, "hmod_llm_api_key", None),
+                llm_api_key_env=getattr(self.model_config, "hmod_llm_api_key_env", "HMOD_LLM_API_KEY"),
+                llm_base_url=getattr(self.model_config, "hmod_llm_base_url", None),
+                llm_temperature=getattr(self.model_config, "hmod_llm_temperature", 0.0),
+                llm_max_tokens=getattr(self.model_config, "hmod_llm_max_tokens", 500),
+                llm_fallback_to_rule=getattr(self.model_config, "hmod_llm_fallback_to_rule", False),
+            )
+        else:
+            controller = DMORLController(
+                n_objectives=self.model_config.n_objectives,
+                objective_names=objective_names,
+                objective_descriptions=objective_descriptions,
+                scenario=scenario,
+                n_basic_skills=self.model_config.n_basic_skills,
+                n_advanced_skills=self.model_config.n_advanced_skills,
+                dynamic_weight_horizon=self.model_config.dynamic_weight_horizon,
+                skills_file=self.model_config.skills_file,
+                hints_file=self.model_config.hints_file,
+                skill_log_file=skill_log_file,
+            )
         # Phase 0: Discover skills (loads from file if already done)
         controller.initialize_skills(
             force_rediscover=self.model_config.force_rediscover_skills
@@ -91,7 +119,10 @@ class DMORLPipeline(PADPPPipeline):
         self.trainer.model.set_skill_library(controller.skill_library)
         # Attach controller to trainer (enables dynamic weight + hints)
         self.trainer.dmorl_controller = controller
-        logger.info("[DMORL] Controller initialised and attached to trainer.")
+        if getattr(self.model_config, "hmod_enabled", False):
+            logger.info("[H-MOD] Controller initialised and attached to trainer.")
+        else:
+            logger.info("[DMORL] Controller initialised and attached to trainer.")
         return controller
 
     def execute(self):
@@ -146,8 +177,14 @@ class DMORLPipeline(PADPPPipeline):
                 logger.info("[DMORL] Phase 1b: Advanced skill training ...")
                 self.run_advanced_skills()
 
-            logger.info("[DMORL] Phase 2: Full PADPP RLT (generalisation) ...")
-            self.run_rlt()
+            if getattr(self.model_config, "hmod_enabled", False) and getattr(
+                self.model_config, "hmod_phase2_dynamic_training", False
+            ):
+                logger.info("[H-MOD] Phase 2: Dynamic objective-conditioned RLT ...")
+                self.run_hmod_phase2()
+            else:
+                logger.info("[DMORL] Phase 2: Full PADPP RLT (generalisation) ...")
+                self.run_rlt()
 
         if self.model_config.run_online_eval:
             self.load_pretrained_model(is_rl=True)
@@ -167,6 +204,9 @@ class DMORLPipeline(PADPPPipeline):
         raise NotImplementedError
 
     def run_advanced_skills(self):
+        raise NotImplementedError
+
+    def run_hmod_phase2(self):
         raise NotImplementedError
 
 
@@ -219,6 +259,14 @@ class DMORLPipelineForRecommendation(DMORLPipeline, PADPPPipelineForRecommendati
         self.trainer.train_advanced_skills(
             cases=train_items, device=self.device,
             simulators=train_sims, action_mapping=action_mapping)
+
+    def run_hmod_phase2(self):
+        train_items, dev_items, train_sims, dev_sims, action_mapping = self._get_rlt_splits()
+        assert isinstance(self.trainer, DMORLTrainer)
+        return self.trainer.train_hmod_phase2(
+            cases=train_items, dev_cases=dev_items,
+            device=self.device, simulators=train_sims,
+            dev_simulators=dev_sims, action_mapping=action_mapping)
 
     def run_rlt(self, dev_ratio=0.1):
         train_items, dev_items, train_sims, dev_sims, action_mapping = \
@@ -299,6 +347,14 @@ class DMORLPipelineForNegotiation(DMORLPipeline, PADPPPipelineForNegotiation):
             cases=train_cases, device=self.device,
             simulators=train_sims, action_mapping=action_mapping)
 
+    def run_hmod_phase2(self):
+        train_cases, dev_cases, train_sims, dev_sims, action_mapping = \
+            self._get_rlt_splits()
+        return self.trainer.train_hmod_phase2(
+            cases=train_cases, dev_cases=dev_cases,
+            device=self.device, simulators=train_sims,
+            dev_simulators=dev_sims, action_mapping=action_mapping)
+
     def run_rlt(self, dev_ratio=0.1):
         train_cases, dev_cases, train_sims, dev_sims, action_mapping = \
             self._get_rlt_splits(dev_ratio)
@@ -369,6 +425,14 @@ class DMORLPipelineForEmotionalSupport(DMORLPipeline, PADPPPipelineForEmotionalS
         self.trainer.train_advanced_skills(
             cases=train_cases, device=self.device,
             simulators=train_sims, action_mapping=action_mapping)
+
+    def run_hmod_phase2(self):
+        train_cases, dev_cases, train_sims, dev_sims, action_mapping = \
+            self._get_rlt_splits()
+        return self.trainer.train_hmod_phase2(
+            cases=train_cases, dev_cases=dev_cases,
+            device=self.device, simulators=train_sims,
+            dev_simulators=dev_sims, action_mapping=action_mapping)
 
     def run_rlt(self, dev_ratio=0.1):
         train_cases, dev_cases, train_sims, dev_sims, action_mapping = \

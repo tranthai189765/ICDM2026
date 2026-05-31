@@ -1,0 +1,223 @@
+{
+  "drift_modes": [
+    "static_no_drift",
+    "gradual_firming",
+    "abrupt_final_offer",
+    "frustrated_walkaway"
+  ],
+  "note": "Recommendation scenarios are derived from DuReCDial preferences and goals, filtered to Movie/Music/POI. Prices are deterministic synthetic bands because DuReCDial has no transaction prices.",
+  "objective_order": [
+    "sl_ratio",
+    "fairness",
+    "deal_rate",
+    "avg_turn"
+  ],
+  "primary_objective_ids": [
+    "AGGRESSIVE_SAVINGS_THEN_RECOVERY",
+    "URGENT_GIFT_WITH_HARD_CEILING",
+    "QUALITY_RISK_THEN_PRICE_PUSH",
+    "BACKUP_OPTION_PRESSURE_CONTROL",
+    "SCARCITY_ADAPTIVE_BUYER",
+    "FAIR_RELATIONSHIP_REPEAT_BUYER",
+    "BUDGET_LOCKED_FLEXIBLE_TIMING",
+    "LONG_HAGGLE_FATIGUE_CONTROL"
+  ],
+  "recommendation_allowed_domains": [
+    "movie",
+    "music",
+    "poi"
+  ],
+  "seed": 2026,
+  "source_files": {
+    "bargain_test": "data/neg_data/craigslist/cb-test.txt",
+    "bargain_train": "data/neg_data/craigslist/cb-train.txt",
+    "recommendation_test": "data/rec_data/durecdial/data/en_test.txt",
+    "recommendation_train": "data/rec_data/durecdial/data/en_train.txt"
+  },
+  "source_recommendation_domain_counts": {
+    "test": {
+      "food": 81,
+      "general": 424,
+      "movie": 513,
+      "music": 604,
+      "poi": 130
+    },
+    "train": {
+      "food": 251,
+      "general": 1524,
+      "movie": 1708,
+      "music": 1733,
+      "poi": 462
+    }
+  },
+  "source_row_counts": {
+    "bargain_test": 188,
+    "bargain_train": 3290,
+    "recommendation_test": 1752,
+    "recommendation_train": 5678
+  },
+  "splits": {
+    "hmod_bargain_test_scenarios.yaml": {
+      "count": 250,
+      "distribution": {
+        "buyer_intent_id": {
+          "AGGRESSIVE_SAVINGS_THEN_RECOVERY": 32,
+          "BACKUP_OPTION_PRESSURE_CONTROL": 32,
+          "BUDGET_LOCKED_FLEXIBLE_TIMING": 30,
+          "FAIR_RELATIONSHIP_REPEAT_BUYER": 32,
+          "LONG_HAGGLE_FATIGUE_CONTROL": 28,
+          "QUALITY_RISK_THEN_PRICE_PUSH": 32,
+          "SCARCITY_ADAPTIVE_BUYER": 32,
+          "URGENT_GIFT_WITH_HARD_CEILING": 32
+        },
+        "drift_mode": {
+          "abrupt_final_offer": 62,
+          "frustrated_walkaway": 62,
+          "gradual_firming": 63,
+          "static_no_drift": 63
+        },
+        "seller_persona": {
+          "cooperative_midpoint_seller": 32,
+          "deadline_final_offer_seller": 31,
+          "firm_after_lowballs_seller": 32,
+          "guarded_condition_seller": 31,
+          "impatient_walkaway_seller": 31,
+          "lowball_sensitive_seller": 31,
+          "scarcity_pressure_seller": 31,
+          "steady_value_seller": 31
+        },
+        "source_dataset": {
+          "craigslist_bargain": 250
+        }
+      },
+      "generator": "scripts/generate_hmod_benchmark_scenarios.py",
+      "seed": 2026,
+      "source_path": "data/neg_data/craigslist/cb-test.txt",
+      "split": "craigslist_bargain_test"
+    },
+    "hmod_bargain_train_scenarios.yaml": {
+      "count": 1000,
+      "distribution": {
+        "buyer_intent_id": {
+          "AGGRESSIVE_SAVINGS_THEN_RECOVERY": 128,
+          "BACKUP_OPTION_PRESSURE_CONTROL": 124,
+          "BUDGET_LOCKED_FLEXIBLE_TIMING": 124,
+          "FAIR_RELATIONSHIP_REPEAT_BUYER": 124,
+          "LONG_HAGGLE_FATIGUE_CONTROL": 124,
+          "QUALITY_RISK_THEN_PRICE_PUSH": 124,
+          "SCARCITY_ADAPTIVE_BUYER": 124,
+          "URGENT_GIFT_WITH_HARD_CEILING": 128
+        },
+        "drift_mode": {
+          "abrupt_final_offer": 250,
+          "frustrated_walkaway": 250,
+          "gradual_firming": 250,
+          "static_no_drift": 250
+        },
+        "seller_persona": {
+          "cooperative_midpoint_seller": 125,
+          "deadline_final_offer_seller": 125,
+          "firm_after_lowballs_seller": 125,
+          "guarded_condition_seller": 125,
+          "impatient_walkaway_seller": 125,
+          "lowball_sensitive_seller": 125,
+          "scarcity_pressure_seller": 125,
+          "steady_value_seller": 125
+        },
+        "source_dataset": {
+          "craigslist_bargain": 1000
+        }
+      },
+      "generator": "scripts/generate_hmod_benchmark_scenarios.py",
+      "seed": 2026,
+      "source_path": "data/neg_data/craigslist/cb-train.txt",
+      "split": "craigslist_bargain_train"
+    },
+    "hmod_recommendation_test_scenarios.yaml": {
+      "count": 250,
+      "distribution": {
+        "buyer_intent_id": {
+          "AGGRESSIVE_SAVINGS_THEN_RECOVERY": 32,
+          "BACKUP_OPTION_PRESSURE_CONTROL": 32,
+          "BUDGET_LOCKED_FLEXIBLE_TIMING": 30,
+          "FAIR_RELATIONSHIP_REPEAT_BUYER": 32,
+          "LONG_HAGGLE_FATIGUE_CONTROL": 28,
+          "QUALITY_RISK_THEN_PRICE_PUSH": 32,
+          "SCARCITY_ADAPTIVE_BUYER": 32,
+          "URGENT_GIFT_WITH_HARD_CEILING": 32
+        },
+        "drift_mode": {
+          "abrupt_final_offer": 62,
+          "frustrated_walkaway": 62,
+          "gradual_firming": 63,
+          "static_no_drift": 63
+        },
+        "recommendation_domain": {
+          "movie": 84,
+          "music": 83,
+          "poi": 83
+        },
+        "seller_persona": {
+          "cooperative_midpoint_seller": 32,
+          "deadline_final_offer_seller": 31,
+          "firm_after_lowballs_seller": 32,
+          "guarded_condition_seller": 31,
+          "impatient_walkaway_seller": 31,
+          "lowball_sensitive_seller": 31,
+          "scarcity_pressure_seller": 31,
+          "steady_value_seller": 31
+        },
+        "source_dataset": {
+          "durecdial_recommendation": 250
+        }
+      },
+      "generator": "scripts/generate_hmod_benchmark_scenarios.py",
+      "seed": 2026,
+      "source_path": "data/rec_data/durecdial/data/en_test.txt",
+      "split": "durecdial_recommendation_test"
+    },
+    "hmod_recommendation_train_scenarios.yaml": {
+      "count": 1000,
+      "distribution": {
+        "buyer_intent_id": {
+          "AGGRESSIVE_SAVINGS_THEN_RECOVERY": 128,
+          "BACKUP_OPTION_PRESSURE_CONTROL": 124,
+          "BUDGET_LOCKED_FLEXIBLE_TIMING": 124,
+          "FAIR_RELATIONSHIP_REPEAT_BUYER": 124,
+          "LONG_HAGGLE_FATIGUE_CONTROL": 124,
+          "QUALITY_RISK_THEN_PRICE_PUSH": 124,
+          "SCARCITY_ADAPTIVE_BUYER": 124,
+          "URGENT_GIFT_WITH_HARD_CEILING": 128
+        },
+        "drift_mode": {
+          "abrupt_final_offer": 250,
+          "frustrated_walkaway": 250,
+          "gradual_firming": 250,
+          "static_no_drift": 250
+        },
+        "recommendation_domain": {
+          "movie": 334,
+          "music": 333,
+          "poi": 333
+        },
+        "seller_persona": {
+          "cooperative_midpoint_seller": 125,
+          "deadline_final_offer_seller": 125,
+          "firm_after_lowballs_seller": 125,
+          "guarded_condition_seller": 125,
+          "impatient_walkaway_seller": 125,
+          "lowball_sensitive_seller": 125,
+          "scarcity_pressure_seller": 125,
+          "steady_value_seller": 125
+        },
+        "source_dataset": {
+          "durecdial_recommendation": 1000
+        }
+      },
+      "generator": "scripts/generate_hmod_benchmark_scenarios.py",
+      "seed": 2026,
+      "source_path": "data/rec_data/durecdial/data/en_train.txt",
+      "split": "durecdial_recommendation_train"
+    }
+  }
+}

@@ -1,0 +1,117 @@
+{
+  "mode": "hmod_dynamic",
+  "controller_mode": "rule_scaffold",
+  "judge_model": "rule",
+  "objective_file": "config/scenario/hmod_buyer_objectives.py",
+  "objective_id": null,
+  "reflection_horizon": 3,
+  "metrics": {
+    "num_dialogues": 4,
+    "llm_sr": 0.0,
+    "gsr": 0.0,
+    "t2da": 8.666666666666666,
+    "t2da_count": 3,
+    "blocked_cvr": 0.0,
+    "actual_cvr": 0.0,
+    "cvr": 0.0
+  },
+  "metrics_by_drift_mode": {
+    "static_no_drift": {
+      "num_dialogues": 1,
+      "llm_sr": 0.0,
+      "gsr": 0.0,
+      "t2da": null,
+      "t2da_count": 0,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.0,
+      "cvr": 0.0
+    },
+    "gradual_firming": {
+      "num_dialogues": 1,
+      "llm_sr": 0.0,
+      "gsr": 0.0,
+      "t2da": 9.0,
+      "t2da_count": 1,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.0,
+      "cvr": 0.0
+    },
+    "abrupt_final_offer": {
+      "num_dialogues": 1,
+      "llm_sr": 0.0,
+      "gsr": 0.0,
+      "t2da": 8.0,
+      "t2da_count": 1,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.0,
+      "cvr": 0.0
+    },
+    "frustrated_walkaway": {
+      "num_dialogues": 1,
+      "llm_sr": 0.0,
+      "gsr": 0.0,
+      "t2da": 9.0,
+      "t2da_count": 1,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.0,
+      "cvr": 0.0
+    }
+  },
+  "metrics_by_persona": {
+    "cooperative_midpoint_seller": {
+      "num_dialogues": 1,
+      "llm_sr": 0.0,
+      "gsr": 0.0,
+      "t2da": null,
+      "t2da_count": 0,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.0,
+      "cvr": 0.0
+    },
+    "firm_after_lowballs_seller": {
+      "num_dialogues": 1,
+      "llm_sr": 0.0,
+      "gsr": 0.0,
+      "t2da": 9.0,
+      "t2da_count": 1,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.0,
+      "cvr": 0.0
+    },
+    "scarcity_pressure_seller": {
+      "num_dialogues": 1,
+      "llm_sr": 0.0,
+      "gsr": 0.0,
+      "t2da": 8.0,
+      "t2da_count": 1,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.0,
+      "cvr": 0.0
+    },
+    "impatient_walkaway_seller": {
+      "num_dialogues": 1,
+      "llm_sr": 0.0,
+      "gsr": 0.0,
+      "t2da": 9.0,
+      "t2da_count": 1,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.0,
+      "cvr": 0.0
+    }
+  },
+  "metrics_by_objective": {
+    "AGGRESSIVE_SAVINGS_THEN_RECOVERY": {
+      "num_dialogues": 4,
+      "llm_sr": 0.0,
+      "gsr": 0.0,
+      "t2da": 8.666666666666666,
+      "t2da_count": 3,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.0,
+      "cvr": 0.0
+    }
+  },
+  "scenario_file": "config/scenario/generated/hmod_recommendation_test_scenarios.yaml",
+  "num_dialogues": 4,
+  "human_audit_samples": 2
+}

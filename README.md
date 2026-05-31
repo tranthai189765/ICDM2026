@@ -3,6 +3,8 @@
 > **Built on top of [PADPP](https://aclanthology.org/2025.emnlp-main.1123/) (EMNLP 2025)**
 > Submitted to **ICDM 2026**
 
+For the H-MOD buyer-agent drift extension, see [README_HMOD.md](README_HMOD.md).
+
 DMORL extends PADPP to address two core limitations of existing multi-objective dialogue policy methods:
 
 | Limitation | Our Solution |

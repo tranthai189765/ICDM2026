@@ -38,6 +38,22 @@ class DMORLConfig(PADPPConfig):
     phase1a_only = False               # Stop after Phase 1a (for isolated testing)
     phase1a_eval_episodes = 3          # Eval dialogues per basic skill after Phase 1a
 
+    # ── H-MOD training hooks ─────────────────────────────────────────────────
+    hmod_enabled = False
+    hmod_objective_file = None
+    hmod_objective_id = None
+    hmod_phase2_dynamic_training = False
+    hmod_reflection_horizon = None
+    hmod_controller_mode = "rule_scaffold"
+    hmod_macro_goal = None
+    hmod_llm_model = None
+    hmod_llm_api_key = None
+    hmod_llm_api_key_env = "DEEPINFRA_API_KEY"
+    hmod_llm_base_url = None
+    hmod_llm_temperature = 0.0
+    hmod_llm_max_tokens = 500
+    hmod_llm_fallback_to_rule = False
+
     # Debug mode
     debug = False                      # Print LLM prompts/outputs, per-step rewards/losses
     debug_output_dir = "debug_output"  # Directory for debug artefacts (eval dialogues, etc.)

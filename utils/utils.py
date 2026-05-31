@@ -8,7 +8,11 @@ import argparse
 
 import numpy as np
 from tqdm import tqdm
-from fastchat.model import add_model_args
+try:
+    from fastchat.model import add_model_args
+except ModuleNotFoundError:
+    def add_model_args(parser):
+        return parser
 
 # datasets for recommendation
 from dataset.rec_datasets.durecdial import DuRecdial
@@ -186,7 +190,9 @@ from dmorl.pipeline import DMORLPipelineForRecommendation, DMORLPipelineForNegot
 
 # metrics for evaluation
 from eval.metric import Accuracy, PrecisionRecallF1, Item_Freq, SR, OfflineMetric, OnlineMetric, DistN, AverageTurn, \
-    RougeN, BleuN, Fairness, SL_Ratio, Toxicity, User_Reward, DealRate
+    RougeN, BleuN, Fairness, SL_Ratio, Toxicity, User_Reward, DealRate, LLMSuccessRate, \
+    GoalSuccessRate, TurnToDriftAdaptationDelay, ConstraintViolationRate, \
+    BlockedConstraintViolationRate, ActualConstraintViolationRate
 
 # user simulators
 from simulator.rec_simulator import RecommendationSimulator
@@ -622,6 +628,14 @@ def get_model_by_names(scenario, model_names):
                 DMORLPipelineForNegotiation,
                 DMORLTrainer
             ],
+            # H-MOD – seller-objective controller + DMORL/PADPP training phases
+            HMOD: [
+                HMOD_CONFIG_PATH_FOR_NEGOTIATION,
+                DMORLConfigForNegotiation,
+                DMORLModel,
+                DMORLPipelineForNegotiation,
+                DMORLTrainer
+            ],
             # # Set max PADPP
             # SMP_PADPP: [
             #     SMP_PADPP_CONFIG_PATH_FOR_NEGOTIATION,
@@ -857,6 +871,12 @@ def get_metrics_by_names(scenario, metric_names):
 
             # online metrics
             SUCCESS_RATE: SR(),
+            LLM_SUCCESS_RATE: LLMSuccessRate(),
+            GOAL_SUCCESS_RATE: GoalSuccessRate(),
+            T2DA: TurnToDriftAdaptationDelay(),
+            CVR: ConstraintViolationRate(),
+            BLOCKED_CVR: BlockedConstraintViolationRate(),
+            ACTUAL_CVR: ActualConstraintViolationRate(),
             SL_RATIO: SL_Ratio(),
             FAIRNESS: Fairness(),
             DEAL_RATE: DealRate(),

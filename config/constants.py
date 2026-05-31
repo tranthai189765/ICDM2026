@@ -207,6 +207,10 @@ DMORL_CONFIG_PATH_FOR_RECOMMENDATION = 'config/models/DMORL_REC.yaml'
 DMORL_CONFIG_PATH_FOR_NEGOTIATION = 'config/models/DMORL_NEG.yaml'
 DMORL_CONFIG_PATH_FOR_EMOTIONAL_SUPPORT = 'config/models/DMORL_ES.yaml'
 
+# H-MOD – buyer-objective H-MOD training/evaluation on top of DMORL/PADPP
+HMOD = 'hmod'
+HMOD_CONFIG_PATH_FOR_NEGOTIATION = 'config/models/HMOD_NEG.yaml'
+
 # types of evaluators
 OFFLINE = 'offline'
 ONLINE = 'online'
@@ -221,6 +225,14 @@ DIST_N = 'dist_n'
 
 # success rate
 SUCCESS_RATE = 'sr'
+
+# H-MOD buyer-agent evaluation metrics
+LLM_SUCCESS_RATE = 'llm_sr'
+GOAL_SUCCESS_RATE = 'gsr'
+T2DA = 't2da'
+CVR = 'cvr'
+BLOCKED_CVR = 'blocked_cvr'
+ACTUAL_CVR = 'actual_cvr'
 
 # deal rate
 DEAL_RATE = 'deal_rate'

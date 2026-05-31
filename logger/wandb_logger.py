@@ -1,4 +1,20 @@
-import wandb
+try:
+    import wandb
+except ModuleNotFoundError:
+    class _NoOpRun:
+        def log(self, *args, **kwargs):
+            return None
+
+    class _NoOpWandB:
+        config = type("_NoOpConfig", (), {})()
+
+        def login(self, *args, **kwargs):
+            return None
+
+        def init(self, *args, **kwargs):
+            return _NoOpRun()
+
+    wandb = _NoOpWandB()
 from base.logger import Logger
 from eval.metric import *
 from config.constants import RECOMMENDATION, NEGOTIATION

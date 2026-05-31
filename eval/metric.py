@@ -7,8 +7,21 @@ from nltk.translate.bleu_score import sentence_bleu
 
 from base.metric import Metric
 
-from rouge import Rouge
-from config.constants import SUCCESS_RATE, AVG_TURN, SL_RATIO, FAIRNESS, TOXICITY, ITEM_FREQ, USER_REWARD, DEAL_RATE
+try:
+    from rouge import Rouge
+except ModuleNotFoundError:
+    class Rouge:
+        def get_scores(self, hypothesis, reference):
+            return [{
+                "rouge-1": {"f": 0.0},
+                "rouge-2": {"f": 0.0},
+                "rouge-l": {"f": 0.0},
+            }]
+from config.constants import (
+    SUCCESS_RATE, AVG_TURN, SL_RATIO, FAIRNESS, TOXICITY, ITEM_FREQ,
+    USER_REWARD, DEAL_RATE, LLM_SUCCESS_RATE, GOAL_SUCCESS_RATE, T2DA,
+    CVR, BLOCKED_CVR, ACTUAL_CVR,
+)
 
 
 def _cal_rouge(hypothesis, reference):
@@ -288,6 +301,41 @@ class DealRate(OnlineMetric):
         for result in results:
             fairness += result[DEAL_RATE]
         return fairness / len(results)
+
+
+class LLMSuccessRate(OnlineMetric):
+    def compute(self, results):
+        return sum(float(result.get(LLM_SUCCESS_RATE, 0.0)) for result in results) / max(len(results), 1)
+
+
+class GoalSuccessRate(OnlineMetric):
+    def compute(self, results):
+        return sum(float(result.get(GOAL_SUCCESS_RATE, result.get("gsr", 0.0))) for result in results) / max(len(results), 1)
+
+
+class TurnToDriftAdaptationDelay(OnlineMetric):
+    def compute(self, results):
+        values = [
+            result.get(T2DA)
+            for result in results
+            if result.get(T2DA) is not None
+        ]
+        return (sum(values) / len(values)) if values else None
+
+
+class ConstraintViolationRate(OnlineMetric):
+    def compute(self, results):
+        return sum(float(result.get(CVR, 0.0)) for result in results) / max(len(results), 1)
+
+
+class BlockedConstraintViolationRate(OnlineMetric):
+    def compute(self, results):
+        return sum(float(result.get(BLOCKED_CVR, 0.0)) for result in results) / max(len(results), 1)
+
+
+class ActualConstraintViolationRate(OnlineMetric):
+    def compute(self, results):
+        return sum(float(result.get(ACTUAL_CVR, 0.0)) for result in results) / max(len(results), 1)
 
 
 class Toxicity(OnlineMetric):
