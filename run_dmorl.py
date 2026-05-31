@@ -143,8 +143,24 @@ def parse_dmorl_args():
                                help='Skip SFT phase (use existing checkpoint)')
     dmorl_parser.add_argument('--skip_offline_eval', action='store_true', default=False,
                                help='Skip offline evaluation phase')
+    dmorl_parser.add_argument('--skip_online_eval', action='store_true', default=False,
+                               help='Skip online evaluation phase')
     dmorl_parser.add_argument('--sampled_times', type=int, default=None,
                                help='Episodes collected per RL epoch (override config, e.g. 5 for fast debug)')
+    dmorl_parser.add_argument('--train_rl_batch_size', type=int, default=None,
+                               help='Override RL batch size for smoke/debug runs')
+    dmorl_parser.add_argument('--buffer_length', type=int, default=None,
+                               help='Override RL replay buffer length for smoke/debug runs')
+    dmorl_parser.add_argument('--saved_dir', type=str, default=None,
+                               help='Override model checkpoint directory')
+    dmorl_parser.add_argument('--tokenizer', type=str, default=None,
+                               help='Override policy tokenizer, e.g. hf-internal-testing/tiny-random-roberta')
+    dmorl_parser.add_argument('--plm', type=str, default=None,
+                               help='Override policy PLM, e.g. hf-internal-testing/tiny-random-roberta')
+    dmorl_parser.add_argument('--lm_size', type=int, default=None,
+                               help='Override PLM hidden size when using a tiny smoke model')
+    dmorl_parser.add_argument('--num_train_epochs_override', type=int, default=None,
+                               help='Override SFT epochs without changing the base parser default')
     dmorl_parser.add_argument('--hmod_enabled', action='store_true', default=None,
                                help='Use H-MOD buyer-objective controller inside DMORL training')
     dmorl_parser.add_argument('--hmod_objective_file', type=str, default=None,
@@ -307,6 +323,11 @@ if __name__ == '__main__':
                     dmorl_params['run_sft'] = False
                 if dmorl_overrides.get('skip_offline_eval'):
                     dmorl_params['run_offline_eval'] = False
+                if dmorl_overrides.get('skip_online_eval'):
+                    dmorl_params['run_online_eval'] = False
+                if dmorl_overrides.get('num_train_epochs_override') is not None:
+                    dmorl_params['num_train_epochs'] = dmorl_overrides[
+                        'num_train_epochs_override']
                 if dmorl_overrides.get('hmod_reflection_horizon') is not None:
                     dmorl_params['dynamic_weight_horizon'] = dmorl_overrides[
                         'hmod_reflection_horizon']
@@ -350,6 +371,7 @@ if __name__ == '__main__':
                         'prompt': generation_prompt,
                         'scenario_name': game_config.name,
                         'dataset': dataset_config.dataset_name,
+                        'model_type': game_config.model_type,
                     })
                     if gen_name == VICUNA:
                         generation_config.set_params({

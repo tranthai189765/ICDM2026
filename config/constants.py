@@ -81,6 +81,7 @@ INSPIRED = 'inspired'
 
 # datasets for negotiation
 CRAIGSLIST_BARGAIN = 'craigslist_bargain'
+CRAIGSLIST_BARGAIN_SMOKE = 'craigslist_bargain_smoke'
 
 # dataset for emotional support
 ES_CONV = "es_conv"
@@ -89,6 +90,7 @@ ES_CONV = "es_conv"
 DURECDIAL_CONFIG_PATH = 'config/datasets/durecdial.yaml'
 INSPIRED_CONFIG_PATH = 'config/datasets/inspired.yaml'
 CRAIGSLIST_BARGAIN_CONFIG_PATH = 'config/datasets/craigslist_bargain.yaml'
+CRAIGSLIST_BARGAIN_SMOKE_CONFIG_PATH = 'config/datasets/craigslist_bargain_smoke.yaml'
 ES_CONV_CONFIG_PATH = 'config/datasets/es_conv.yaml'
 
 RECOMMENDATION_CONFIG_PATH = 'config/scenario/recommendation.yaml'

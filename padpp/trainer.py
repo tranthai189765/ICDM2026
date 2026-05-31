@@ -999,7 +999,7 @@ class PADPPTrainer(Trainer):
                     # mask redundant actions in the GPI path too
                     action_mask = _build_action_mask(
                         action_mapping, logits.size(-1), logits.device)
-                    logits = logits.masked_fill(~action_mask.unsqueeze(-1), float('-inf'))
+                    logits = logits.masked_fill(~action_mask, float('-inf'))
                     # computing the q value and next q values
                 # Inference
                 else:

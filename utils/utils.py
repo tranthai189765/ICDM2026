@@ -413,6 +413,11 @@ def get_datasets_by_names(scenario, dataset_names):
                 CRAIGSLIST_BARGAIN_CONFIG_PATH,
                 CraiglistBargain,
                 DatasetConfigForNegotiation
+            ],
+            CRAIGSLIST_BARGAIN_SMOKE: [
+                CRAIGSLIST_BARGAIN_SMOKE_CONFIG_PATH,
+                CraiglistBargain,
+                DatasetConfigForNegotiation
             ]
         }
         # collecting datasets

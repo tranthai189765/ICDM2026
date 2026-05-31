@@ -72,7 +72,7 @@ class TestTrainBasicSkills:
             trainer.train_basic_skills([], device=None, simulators=[], action_mapping={})
         mock_rlt.assert_not_called()
 
-    def test_calls_rlt_once_per_skill(self):
+    def test_calls_rlt_once_with_all_basic_skills(self):
         trainer = make_trainer()
         ctrl = MagicMock()
         ctrl.skill_library.basic_skills = [
@@ -85,9 +85,18 @@ class TestTrainBasicSkills:
         with patch.object(trainer, "_run_curriculum_rlt") as mock_rlt:
             trainer.train_basic_skills(["case"], device=None, simulators=["sim"], action_mapping={})
 
-        assert mock_rlt.call_count == 3
+        assert mock_rlt.call_count == 1
+        kwargs = mock_rlt.call_args[1]
+        assert kwargs["phase"] == "1a"
+        assert kwargs["p_skill"] == 1.0
+        assert kwargs["skill_names"] == ["S1", "S2", "S3"]
+        np.testing.assert_allclose(
+            kwargs["skill_weights"],
+            [[1.0, 0.0], [0.5, 0.5], [0.0, 1.0]],
+            atol=1e-6,
+        )
 
-    def test_each_rlt_call_uses_fixed_weight(self):
+    def test_rlt_call_uses_basic_skill_weight_bank(self):
         trainer = make_trainer()
         ctrl = MagicMock()
         ctrl.skill_library.basic_skills = [
@@ -99,12 +108,10 @@ class TestTrainBasicSkills:
         with patch.object(trainer, "_run_curriculum_rlt") as mock_rlt:
             trainer.train_basic_skills([], device=None, simulators=[], action_mapping={})
 
-        for c in mock_rlt.call_args_list:
-            # fixed_weight can be positional or keyword
-            kwargs = c[1] if c[1] else {}
-            args = c[0] if c[0] else ()
-            fixed = kwargs.get("fixed_weight")
-            assert fixed is not None, "Phase-1a must pass fixed_weight to _run_curriculum_rlt"
+        kwargs = mock_rlt.call_args[1]
+        assert "fixed_weight" not in kwargs
+        np.testing.assert_allclose(kwargs["skill_weights"], [[1.0, 0.0], [0.0, 1.0]], atol=1e-6)
+        assert kwargs["skill_names"] == ["S1", "S2"]
 
     def test_restores_num_train_rl_epochs_after_completion(self):
         trainer = make_trainer()

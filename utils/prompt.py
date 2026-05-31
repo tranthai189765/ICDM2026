@@ -207,6 +207,8 @@ def call_llm(prompt, n=1, temperature=0.0, max_token=10, model_type='chatgpt'):
     :return:
     """
     responses = []
+    if model_type == "rule":
+        return ["OK."] * n
     # call llm for n times
     for i in range(n):
         # the llm is the chatgpt model
@@ -362,6 +364,20 @@ def get_llm_based_assessment_for_negotiation(simulated_conversation,
             role = 'Buyer'
         dial += f"{role}: {utt['content']}"
         dial += ". "
+
+    if model_type == "rule":
+        deal_price = None
+        for utt in simulated_conversation:
+            content = utt.get('content', '') or ''
+            lower = content.lower()
+            if 'deal' not in lower and 'accept' not in lower:
+                continue
+            prices = re.findall(r"[-+]?\d*\.?\d+", content.replace(",", ""))
+            if prices:
+                deal_price = float(prices[-1])
+        if deal_price is None:
+            return ["They have not reached a deal."] * n
+        return [f"They have reached a deal at ${deal_price:.0f}."] * n
 
     # construct the message to prompt the llm
     # following the prompt from PPDPP

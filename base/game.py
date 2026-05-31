@@ -5,7 +5,7 @@ import time
 from abc import ABC, abstractmethod
 from loguru import logger
 
-from config.constants import DURECDIAL, INSPIRED, CRAIGSLIST_BARGAIN, ES_CONV
+from config.constants import DURECDIAL, INSPIRED, CRAIGSLIST_BARGAIN, CRAIGSLIST_BARGAIN_SMOKE, ES_CONV
 from utils.prompt import get_llm_based_assessment_for_recommendation, get_llm_based_assessment_for_negotiation, \
     get_llm_based_assessment_for_emotional_support, get_toxicity_assessment_for_emotional_support, \
     get_user_sentiment_for_item_recommendation
@@ -347,7 +347,7 @@ class NegotiationGame(Game):
         :param simulator: a simulator used to generate the user's response
         :return:
         """
-        if self.dataset_config.dataset_name == CRAIGSLIST_BARGAIN:
+        if self.dataset_config.dataset_name in {CRAIGSLIST_BARGAIN, CRAIGSLIST_BARGAIN_SMOKE}:
             goal = "greet"
         else:
             raise Exception("Invalid dataset")

@@ -1,4 +1,5 @@
 import time
+import re
 
 from loguru import logger
 from base.simulator import Simulator
@@ -14,7 +15,10 @@ class NegotiationSimulator(Simulator):
         """
         self.use_persona = use_persona
         # generating the profile description
-        self.user_profile_description = self.generate_persona_description(user_profile)
+        if use_persona:
+            self.user_profile_description = self.generate_persona_description(user_profile)
+        else:
+            self.user_profile_description = "A neutral seller who negotiates on price."
 
     def respond(self, state):
         """
@@ -22,6 +26,9 @@ class NegotiationSimulator(Simulator):
         :param state: the current state of the conversation
         :return: the generated response by the user.
         """
+        if self.model_type == "rule":
+            return self._rule_response(state)
+
         dialogue_context = state['dialogue_context']
         item_name = state['task_background']['item_name']
         initial_price = state['task_background']['seller_price']
@@ -105,6 +112,25 @@ class NegotiationSimulator(Simulator):
         response = call_llm(messages, n=1, temperature=0.00000001, max_token=self.max_gen_token, model_type=self.model_type)
         logger.debug(f"Simulator Generation Time: {time.time() - t:.2f}s")
         return response[0]
+
+    def _rule_response(self, state):
+        """Deterministic seller response used only for smoke/debug training."""
+        seller_price = float(state['task_background']['seller_price'])
+        buyer_price = float(state['task_background']['buyer_price'])
+        span = max(seller_price - buyer_price, 1.0)
+        assistant_turns = [
+            turn for turn in state.get('dialogue_context', [])
+            if turn.get('role') == 'assistant'
+        ]
+        latest_buyer = assistant_turns[-1].get('content', '') if assistant_turns else ''
+        prices = re.findall(r"[-+]?\d*\.?\d+", latest_buyer.replace(",", ""))
+        buyer_offer = float(prices[-1]) if prices else None
+        accept_price = buyer_price + 0.60 * span
+        if buyer_offer is not None and buyer_offer >= accept_price:
+            return f"Deal, I can sell it for ${buyer_offer:.0f}."
+        concession = min(len(assistant_turns), 4) * 0.08
+        counter = max(accept_price, seller_price - concession * span)
+        return f"I can come down to ${counter:.0f}, but I cannot go much lower."
 
     def generate_persona_description(self, user_profile):
         """
