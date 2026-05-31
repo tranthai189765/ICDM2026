@@ -297,10 +297,29 @@ class DMORLTrainer(PADPPTrainer):
         # p_skill=1.0 ⇒ every Phase-1b episode is trained on an advanced skill
         # weight (no random-weight branch). With a single uniform advanced skill
         # [1/3, 1/3, 1/3] this matches PADPP Table 2's Uniform row exactly.
-        self._run_curriculum_rlt(cases, device, simulators, action_mapping,
-                                 skill_weights=adv_weights, skill_names=adv_names,
-                                 p_skill=1.0,
-                                 phase="1b", skill_name="advanced")
+        #
+        # GPI teacher forcing: set _gpi_skill_envelope so predict() (rollout
+        # action selection) and train_rl_step() (Q2 target convex envelope +
+        # sampled_preferences for Q1) both use the Phase 1a basic skills
+        # [1,0,0], [0,1,0], [0,0,1] plus the advanced skill as the envelope.
+        basic_skills = self.dmorl_controller.skill_library.basic_skills
+        envelope_weights = (
+            [s["weight_vector"] for s in basic_skills]
+            + [s["weight_vector"] for s in advanced_skills]
+        )
+        self._gpi_skill_envelope = torch.FloatTensor(envelope_weights).to(self.device)
+        loguru_logger.info(
+            f"[DMORL Phase-1b] GPI teacher forcing envelope = {envelope_weights}"
+        )
+
+        try:
+            self._run_curriculum_rlt(cases, device, simulators, action_mapping,
+                                     skill_weights=adv_weights, skill_names=adv_names,
+                                     p_skill=1.0,
+                                     phase="1b", skill_name="advanced")
+        finally:
+            # Always clear so later phases / eval revert to PADPP default
+            self._gpi_skill_envelope = None
 
         self.model_config.num_train_rl_epochs = original_epochs
         loguru_logger.info("[DMORL Phase-1b] Advanced skill training complete.")

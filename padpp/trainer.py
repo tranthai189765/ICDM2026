@@ -457,13 +457,21 @@ class PADPPTrainer(Trainer):
                 # # NOTE: if we draw preferences from a uniform distribution
                 # else:
 
-                sampled_preferences = random_weights(
-                    self.model_config.n_objectives, n=self.model_config.n_preferences)
-                self.memory_buffer.extend(sampled_preferences)
+                # If a GPI skill envelope is set (Phase 1b teacher forcing),
+                # train Q at those skill preferences instead of sampling
+                # random Dirichlet weights; otherwise fall back to PADPP default.
+                envelope = getattr(self, '_gpi_skill_envelope', None)
+                if envelope is not None:
+                    sampled_pref_list = envelope.detach().cpu().numpy().tolist()
+                else:
+                    sampled_pref_list = random_weights(
+                        self.model_config.n_objectives,
+                        n=self.model_config.n_preferences)
+                    self.memory_buffer.extend(sampled_pref_list)
 
                 # we add the sampled preferences to the memory buffer
                 # self.preference_memory.extend(sampled_preferences)
-                sampled_preferences = torch.Tensor(sampled_preferences).to(
+                sampled_preferences = torch.Tensor(sampled_pref_list).to(
                     self.device).requires_grad_(False)
 
                 # computing feature representations
@@ -554,15 +562,18 @@ class PADPPTrainer(Trainer):
                     self.model.eval()
                     # sample update preferences from the memory buffer
                     # w_{prev}
-                    if len(self.memory_buffer) < self.model_config.n_preferences:
-                        prev_sampled_preferences = sampled_preferences
+                    if envelope is not None:
+                        # Phase 1b teacher forcing: GPI envelope = skill weights
+                        prev_pref_list = envelope.detach().cpu().numpy().tolist()
+                    elif len(self.memory_buffer) < self.model_config.n_preferences:
+                        prev_pref_list = sampled_pref_list
                     # sampled previous learned preferences from the memory
                     else:
-                        prev_sampled_preferences = random.choices(
+                        prev_pref_list = random.choices(
                             self.memory_buffer, k=self.model_config.n_preferences)
 
                     prev_sampled_preferences = torch.Tensor(
-                        prev_sampled_preferences).to(self.device).requires_grad_(False)
+                        prev_pref_list).to(self.device).requires_grad_(False)
                     # update the memory buffer
                     # compute the objective embedding for previous updated preferences
                     _, _, prev_w_embedding = self.model.compute_state_resp(
@@ -972,8 +983,16 @@ class PADPPTrainer(Trainer):
         else:
             # predict the action
             for batch in data_loader:
-                w_gpi = random_weights(self.model_config.n_objectives, n=n)
-                w_gpi = torch.Tensor(w_gpi).unsqueeze(1).to(self.device)
+                # GPI envelope source: explicit skill weights (teacher forcing
+                # in Phase 1b) override the default random Dirichlet samples.
+                envelope = getattr(self, '_gpi_skill_envelope', None)
+                if envelope is not None and use_gpi:
+                    w_gpi = envelope.detach().unsqueeze(1).to(self.device)
+                    gpi_n = envelope.size(0)
+                else:
+                    w_gpi = random_weights(self.model_config.n_objectives, n=n)
+                    w_gpi = torch.Tensor(w_gpi).unsqueeze(1).to(self.device)
+                    gpi_n = n
 
                 # compute the state representation
                 reward = None
@@ -992,7 +1011,7 @@ class PADPPTrainer(Trainer):
                 # applying GPI
                 if use_gpi:
                     # sample a batch of w
-                    logits = logits.repeat(n, 1, 1)
+                    logits = logits.repeat(gpi_n, 1, 1)
                     logits = torch.bmm(logits, w_gpi.permute(0, 2, 1))
                     logits = logits.max(dim=0)[0]
                     logits = logits.permute(1, 0)
