@@ -357,7 +357,10 @@ class DMORLTrainer(PADPPTrainer):
                     w = skill_weights[idx]
                     current_skill = skill_names[idx] if skill_names else f"skill_{idx}"
                 else:
-                    w = random_weights(self.model_config.n_objectives)[0]
+                    # random_weights(dim) with default n=1 already returns the
+                    # weight vector (a list); the extra [0] would strip it to a
+                    # single scalar float and break torch.FloatTensor below.
+                    w = random_weights(self.model_config.n_objectives)
                     current_skill = "random"
 
                 state['w'] = w
@@ -544,13 +547,13 @@ class DMORLTrainer(PADPPTrainer):
                 if self.model_config.objective_weight is not None:
                     w = np.array(self.model_config.objective_weight)
                 elif self.model_config.prioritized_objective == "uniform":
-                    w = random_weights(self.model_config.n_objectives, dist="uniform")[0]
+                    w = random_weights(self.model_config.n_objectives, dist="uniform")
                 else:
                     w = np.array(
                         self.model_config.obj_to_weight[
                             self.model_config.prioritized_objective.strip()])
             else:
-                w = random_weights(self.model_config.n_objectives, dist="uniform")[0]
+                w = random_weights(self.model_config.n_objectives, dist="uniform")
 
             state = self.game.reset(case, simulator)
             state['w'] = w
