@@ -56,10 +56,19 @@ def extract_price_tag(text):
 
 
 def strip_price_tag(text):
-    """Remove every [[PRICE: x]] tag (and trailing whitespace) from text."""
+    """Remove every [[PRICE: x]] tag from text and tidy the leftover spacing.
+
+    Models often place the tag right before the closing punctuation
+    ("... market value [[PRICE: 280]]."), which would otherwise leave an
+    orphaned " ." / " ?". We drop the tag, then fix space-before-punctuation
+    and collapse doubled spaces so the cleaned utterance reads naturally.
+    """
     if not text:
         return text
-    return PRICE_TAG_RE.sub("", text).strip()
+    out = PRICE_TAG_RE.sub("", text)
+    out = re.sub(r"\s+([.,!?;:])", r"\1", out)   # " ." -> "."
+    out = re.sub(r"\s{2,}", " ", out)             # collapse double spaces
+    return out.strip()
 
 
 def convert_list_to_str(knowledge):
