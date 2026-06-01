@@ -404,16 +404,13 @@ class DMORLTrainer(PADPPTrainer):
             f"alpha={alpha_r}, active_sampling={use_active}"
         )
 
-        eps_start = getattr(self.model_config, 'eps_start', 0.3)
-        eps_end = getattr(self.model_config, 'eps_end', 0.05)
-        n_eps_epochs = max(n_epochs - 1, 1)
-
         episode_counter = 0
         for epoch in range(n_epochs):
             self.model.train()
 
-            # linear epsilon decay for exploration this epoch
-            self.current_eps = eps_start + (eps_end - eps_start) * (epoch / n_eps_epochs)
+            # epsilon-greedy: linear decay then floor (see _epsilon_for_epoch)
+            self.current_eps = self._epsilon_for_epoch(epoch, n_epochs)
+            loguru_logger.info(f"[Phase-2] Epoch {epoch}: epsilon={self.current_eps:.3f}")
 
             # 1. Sample candidate preferences for this epoch
             candidate_ws = [random_weights(n_obj) for _ in range(n_cand)]
@@ -703,6 +700,29 @@ class DMORLTrainer(PADPPTrainer):
         self.ppo_global_step += 1
 
     # ═════════════════════════════════════════════════════════════════════════
+    # Exploration schedule: linear decay then floor
+    # ═════════════════════════════════════════════════════════════════════════
+
+    def _epsilon_for_epoch(self, epoch, total_epochs):
+        """
+        epsilon = eps_start → eps_end linearly over the first eps_decay_epochs
+        epochs, then held at eps_end for the remaining epochs.
+
+        e.g. eps_start=1.0, eps_end=0.05, eps_decay_epochs=15, total=25:
+          epoch 0  → 1.00
+          epoch 15 → 0.05
+          epoch 16..24 → 0.05
+        """
+        eps_start = getattr(self.model_config, 'eps_start', 1.0)
+        eps_end = getattr(self.model_config, 'eps_end', 0.05)
+        decay = getattr(self.model_config, 'eps_decay_epochs', None)
+        if decay is None or decay <= 0:
+            decay = max(total_epochs - 1, 1)
+        if epoch >= decay:
+            return eps_end
+        return eps_start + (eps_end - eps_start) * (epoch / decay)
+
+    # ═════════════════════════════════════════════════════════════════════════
     # Internal: Curriculum RLT (Phase 1)
     # ═════════════════════════════════════════════════════════════════════════
 
@@ -727,21 +747,16 @@ class DMORLTrainer(PADPPTrainer):
         buffer = deque(maxlen=self.model_config.buffer_length)
         self.memory_buffer = deque(maxlen=self.model_config.preference_buffer_length)
 
-        # Epsilon-greedy exploration schedule: linearly anneal from eps_start
-        # down to eps_end across the RL epochs. Strong early exploration helps
-        # the policy escape degenerate local optima (e.g. deny/agree spam)
-        # before exploiting. Read by select_action via self.current_eps.
-        eps_start = getattr(self.model_config, 'eps_start', 0.3)
-        eps_end = getattr(self.model_config, 'eps_end', 0.05)
-        n_eps_epochs = max(self.model_config.num_train_rl_epochs - 1, 1)
+        # Epsilon-greedy exploration: linear decay then floor (see
+        # _epsilon_for_epoch). Strong early exploration helps the policy escape
+        # degenerate local optima (e.g. deny/agree spam) before exploiting.
+        total_eps_epochs = self.model_config.num_train_rl_epochs
 
         episode_counter = 0
         for train_step in range(self.model_config.num_train_rl_epochs):
             self.model.train()
 
-            # linear epsilon decay for this epoch
-            frac = train_step / n_eps_epochs
-            self.current_eps = eps_start + (eps_end - eps_start) * frac
+            self.current_eps = self._epsilon_for_epoch(train_step, total_eps_epochs)
             loguru_logger.info(
                 f"[Curriculum] Epoch {train_step}: epsilon={self.current_eps:.3f}"
             )

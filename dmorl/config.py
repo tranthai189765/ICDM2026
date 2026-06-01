@@ -36,9 +36,12 @@ class DMORLConfig(PADPPConfig):
     use_active_sampling = False        # Rollout under highest-regret w if True
     alpha_rpadpp = 0.5                 # L = (1-α)·L_self + α·L_know
 
-    # ── Exploration schedule (epsilon-greedy, linearly annealed per epoch) ───
-    eps_start = 0.3                    # exploration rate at the first RL epoch
-    eps_end = 0.05                     # exploration rate at the last RL epoch
+    # ── Exploration schedule (epsilon-greedy: linear decay then floor) ───────
+    # epsilon decays linearly from eps_start to eps_end across the first
+    # eps_decay_epochs epochs, then stays at eps_end for the rest.
+    eps_start = 1.0                    # exploration rate at epoch 0
+    eps_end = 0.05                     # floor exploration rate
+    eps_decay_epochs = 15              # epochs over which to decay before the floor
 
     # ── Legacy DMORL fields kept for compatibility with existing code paths ──
     n_advanced_skills = 0
