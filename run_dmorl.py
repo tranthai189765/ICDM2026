@@ -151,6 +151,8 @@ def parse_dmorl_args():
                                help='Use the LLM (gen model) to extract the buyer price in compute_reward')
     dmorl_parser.add_argument('--use_price_tag', action='store_true', default=False,
                                help='Buyer/seller LLMs append a [[PRICE: x]] tag; compute_reward parses it directly')
+    dmorl_parser.add_argument('--fairness_train_scale', type=float, default=None,
+                               help='Multiply fairness reward by this during training (e.g. 2.0). Keep 1.0 at eval.')
     dmorl_parser.add_argument('--debug', action='store_true', default=False,
                                help='Print LLM prompts/outputs, per-step rewards/losses, save eval dialogues')
     dmorl_parser.add_argument('--debug_output_dir', type=str, default=None,
@@ -188,6 +190,8 @@ if __name__ == '__main__':
         'model_type': args['model_type'],
         'use_llm_price_extraction': dmorl_overrides.get('use_llm_price_extraction', False),
         'use_price_tag': dmorl_overrides.get('use_price_tag', False),
+        'fairness_train_scale': (dmorl_overrides.get('fairness_train_scale')
+                                 if dmorl_overrides.get('fairness_train_scale') is not None else 1.0),
     })
 
     # ── Datasets ──────────────────────────────────────────────────────────────

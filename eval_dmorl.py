@@ -85,6 +85,8 @@ def parse_eval_args():
                        help='Use the LLM (gen model) to extract the buyer price in compute_reward')
     extra.add_argument('--use_price_tag', action='store_true',
                        help='Buyer/seller LLMs append a [[PRICE: x]] tag; compute_reward parses it directly')
+    extra.add_argument('--fairness_train_scale', type=float, default=1.0,
+                       help='Keep 1.0 at eval so reported r_fair matches the paper (max 0.5).')
     extra_args, _ = extra.parse_known_args(sys.argv[1:])
     return base_args, vars(extra_args)
 
@@ -234,6 +236,7 @@ if __name__ == '__main__':
         'model_type': args['model_type'],
         'use_llm_price_extraction': eval_overrides.get('use_llm_price_extraction', False),
         'use_price_tag': eval_overrides.get('use_price_tag', False),
+        'fairness_train_scale': eval_overrides.get('fairness_train_scale', 1.0),
     })
 
     # ── Dataset ────────────────────────────────────────────────────────────

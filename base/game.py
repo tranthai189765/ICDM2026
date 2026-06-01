@@ -742,6 +742,15 @@ class NegotiationGame(Game):
                 # logger.info('The conversation is on-going !')
                 pass
 
+        # Fairness range-imbalance correction (CLI: --fairness_train_scale).
+        # r_gain and r_deal saturate at 1.0 but the fairness formula caps at
+        # 0.5, so under a balanced weight the scalarised return under-weights
+        # fairness and the policy drifts to gain/deal. Scaling fairness up
+        # during TRAINING (e.g. x2 -> max 1.0) restores parity; eval keeps the
+        # default scale 1.0 so the reported r_fair stays comparable to the
+        # PADPP paper (max 0.5).
+        fairness = fairness * getattr(self.game_config, 'fairness_train_scale', 1.0)
+
         # PADPP-original reward vector (3 dimensions): [sl_ratio, fairness, neg_sr].
         # No shaping, no avg_turn objective -- matches the paper exactly.
         reward = []

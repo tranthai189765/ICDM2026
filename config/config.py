@@ -191,6 +191,10 @@ class NegotiationGameConfig(GameConfig):
     # If True, the buyer/seller LLMs append a [[PRICE: x]] tag to every reply
     # and compute_reward parses the buyer tag directly (CLI: --use_price_tag).
     use_price_tag = False
+    # Multiplier applied to the fairness reward during training to offset its
+    # smaller [-0.5, 0.5] range vs gain/deal's [-1, 1]/{0,1}. Set to 2.0 for
+    # training, keep 1.0 for eval so reported r_fair matches the paper.
+    fairness_train_scale = 1.0
     pass
 
 
