@@ -26,28 +26,6 @@ from logger.file_logger import FileLogger
 from utils.game import save_conversation_for_human_evaluation
 
 
-# Strategies that take a price bin (topic_idx 0..4). All other strategies
-# behave identically across topic_idx, so we mask them to topic 0 only.
-_PRICE_BEARING_STRATEGIES = {'propose', 'counter', 'final_offer'}
-
-
-def _build_action_mask(action_mapping, n_actions, device):
-    """Return a 1-D bool mask over the flat action space. True = valid.
-
-    Effective action space (25 actions, was 65 raw slots):
-      - propose, counter, final_offer  x 5 price bins
-      - agree, disagree, counter-noprice, walk_away, inquire, inform,
-        greet, deny, affirm, confirm   x topic 0 only
-    """
-    if isinstance(action_mapping, tuple):
-        action_mapping = action_mapping[0]
-    mask = torch.zeros(n_actions, device=device, dtype=torch.bool)
-    for (strategy, topic), idx in action_mapping.items():
-        if idx >= n_actions:
-            continue
-        if strategy in _PRICE_BEARING_STRATEGIES or topic == 0:
-            mask[idx] = True
-    return mask
 from utils.game import random_weights
 
 from collections import deque
@@ -1002,14 +980,8 @@ class PADPPTrainer(Trainer):
                         1).permute(0, 2, 1)).squeeze(-1)
                     loguru_logger.debug(f"w={batch['w']} logits={logits}")
 
-                # Mask out semantically-redundant actions (non-price strategies
-                # at topic_idx > 0 collapse to the same generated utterance).
-                # `logits` is shape [1, n_actions] in both GPI and non-GPI paths;
-                # a 1-D mask of size n_actions broadcasts correctly across it.
-                action_mask = _build_action_mask(
-                    action_mapping, logits.size(-1), logits.device)
-                logits = logits.masked_fill(~action_mask, float('-inf'))
-
+                # PADPP-original: no action mask — every (strategy, bin) is a
+                # selectable action.
                 action, log_prob = self.select_action(logits, is_test=is_test)
                 action = inverse_action_mapping[action]
                 loguru_logger.debug(f"action={action} log_prob={log_prob}")

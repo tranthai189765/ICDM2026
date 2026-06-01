@@ -41,33 +41,16 @@ class CraiglistBargain(NegotiationDataset):
 
     def construct_action_mapping(self, combine=True, bin_size=5):
         """
-        Build the (strategy, topic_idx) -> action_id mapping.
-
-        We also dedup self.goals (which is appended once per utterance during
-        process_data and therefore has thousands of duplicates) and inject two
-        additional strategies absent from the raw dataset but useful for
-        modelling real-world buyer tactics:
-          - 'walk_away' : commit to ending negotiation (non-price)
-          - 'final_offer': ultimatum at a specific price (price-bearing)
-
-        Even though the action grid is strategies x bin_size (so up to 13 x 5
-        = 65 slots), trainer.predict() applies an action mask so the agent can
-        only choose the 25 semantically-distinct actions:
-          {propose, counter, final_offer} x 5 bins +
-          {agree, disagree, counter-noprice, walk_away, inquire, inform,
-           greet, deny, affirm, confirm} x topic 0 only.
+        method that construct the action mapping dictionary for the negotiation
+        dataset. Restored to the PADPP-original behaviour: the action grid is
+        exactly the dataset strategies x bin_size, with no injected strategies
+        and no masking — every (strategy, bin) is a selectable action.
         """
-        # Dedup goals preserving insertion order; then add the two new ones.
-        unique_goals = list(dict.fromkeys(self.goals))
-        for extra in ('walk_away', 'final_offer'):
-            if extra not in unique_goals:
-                unique_goals.append(extra)
-
         if combine:
-            goal2id = product(unique_goals, list(range(bin_size)))
+            goal2id = product(self.goals, list(range(bin_size)))
             goal2id = {k: v for v, k in enumerate(goal2id)}
         else:
-            goal2id = {k: v for v, k in enumerate(unique_goals)}
+            goal2id = {k: v for v, k in enumerate(self.goals)}
         return goal2id
 
     def process_data(self, data):
