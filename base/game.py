@@ -12,6 +12,14 @@ from utils.prompt import get_llm_based_assessment_for_recommendation, get_llm_ba
 from config.constants import SUCCESS_RATE, DEAL_RATE, ITEM_FREQ, AVG_TURN, SL_RATIO, FAIRNESS, TOXICITY, USER_REWARD
 
 
+# Only these buyer strategies actually COMMIT to a price. Numbers that appear
+# in any other utterance (deny, disagree, inquire, ...) are referential — e.g.
+# the agent restating its budget while denying — and must NOT be credited as a
+# secured price, otherwise a 'deny' that echoes the buyer target yields a bogus
+# sl_ratio of 1.0 and the policy learns to spam 'deny'.
+NEG_PRICE_COMMITTING = {'propose', 'counter', 'final_offer', 'agree'}
+
+
 class Game(ABC):
 
     def __init__(self, game_config, dataset_config):
@@ -404,10 +412,14 @@ class NegotiationGame(Game):
         # Price-tag protocol: parse the buyer's declared price from the tag and
         # strip the tag before the utterance is stored / shown to the seller.
         # (No-op outside negotiation, where state has no 'use_price_tag' key.)
+        # Only credit the price when the action actually COMMITS to one — a
+        # 'deny'/'inquire' that echoes the buyer's budget is referential, not a
+        # secured price, so it must not overwrite the anchor (anti reward-hack).
         if state.get('use_price_tag'):
             from utils.generation import extract_price_tag, strip_price_tag
+            _strategy_now = action[0] if isinstance(action, tuple) else action
             _buyer_price = extract_price_tag(system_response)
-            if _buyer_price is not None:
+            if _buyer_price is not None and _strategy_now in NEG_PRICE_COMMITTING:
                 state['_buyer_declared_price'] = _buyer_price
             system_response = strip_price_tag(system_response)
 
@@ -551,7 +563,7 @@ class NegotiationGame(Game):
         # NOT a new commitment). Crediting referential numbers destroys the
         # r_gain measurement by ~0.2 on average. For non-committing actions
         # we always fall back to the agent's MOST RECENT real anchor.
-        _PRICE_COMMITTING = {'propose', 'counter', 'final_offer', 'agree'}
+        _PRICE_COMMITTING = NEG_PRICE_COMMITTING
 
         def _scan_prior_anchor():
             for prev_turn in reversed(state['dialogue_context'][:-2]):
@@ -606,9 +618,14 @@ class NegotiationGame(Game):
                     tag_price = None
 
         committed_price = _pick_buyer_price(system_prices)
-        if tag_price is not None:
-            # Trust the buyer's declared price tag.
-            system_price = tag_price
+        if state.get('use_price_tag'):
+            # Tag mode is authoritative and leak-free: _buyer_declared_price
+            # only ever holds prices from PRICE-COMMITTING turns (gated in
+            # step()). If the buyer has never committed a price yet, no gain is
+            # secured → fall straight back to the seller's listing (sl_ratio=0).
+            # We deliberately do NOT scan prior utterance text here, because a
+            # 'deny' that echoes the buyer's budget would otherwise leak in.
+            system_price = tag_price if tag_price is not None else _seller_p
         elif llm_price is not None:
             # Trust the LLM-extracted buyer commitment.
             system_price = llm_price
@@ -821,10 +838,14 @@ class EmotionalSupportGame(Game):
         # Price-tag protocol: parse the buyer's declared price from the tag and
         # strip the tag before the utterance is stored / shown to the seller.
         # (No-op outside negotiation, where state has no 'use_price_tag' key.)
+        # Only credit the price when the action actually COMMITS to one — a
+        # 'deny'/'inquire' that echoes the buyer's budget is referential, not a
+        # secured price, so it must not overwrite the anchor (anti reward-hack).
         if state.get('use_price_tag'):
             from utils.generation import extract_price_tag, strip_price_tag
+            _strategy_now = action[0] if isinstance(action, tuple) else action
             _buyer_price = extract_price_tag(system_response)
-            if _buyer_price is not None:
+            if _buyer_price is not None and _strategy_now in NEG_PRICE_COMMITTING:
                 state['_buyer_declared_price'] = _buyer_price
             system_response = strip_price_tag(system_response)
 
