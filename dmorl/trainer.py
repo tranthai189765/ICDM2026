@@ -323,9 +323,10 @@ class DMORLTrainer(PADPPTrainer):
                 final_reward = None
                 for t in count():
                     pre_dialogue = list(state.get('dialogue_context', []))
+                    # is_test=True → greedy (no epsilon) for the per-anchor eval.
                     action, _, _ = self.predict(
                         state, torch.FloatTensor(w_fixed).to(self.device),
-                        action_mapping, is_computing_reward=False, use_gpi=False,
+                        action_mapping, is_test=True, is_computing_reward=False, use_gpi=False,
                     )
                     state, reward, done, _ = self.game.step(
                         state, action, self.generation_method, simulator
@@ -403,9 +404,16 @@ class DMORLTrainer(PADPPTrainer):
             f"alpha={alpha_r}, active_sampling={use_active}"
         )
 
+        eps_start = getattr(self.model_config, 'eps_start', 0.3)
+        eps_end = getattr(self.model_config, 'eps_end', 0.05)
+        n_eps_epochs = max(n_epochs - 1, 1)
+
         episode_counter = 0
         for epoch in range(n_epochs):
             self.model.train()
+
+            # linear epsilon decay for exploration this epoch
+            self.current_eps = eps_start + (eps_end - eps_start) * (epoch / n_eps_epochs)
 
             # 1. Sample candidate preferences for this epoch
             candidate_ws = [random_weights(n_obj) for _ in range(n_cand)]
@@ -479,6 +487,9 @@ class DMORLTrainer(PADPPTrainer):
             if (epoch + 1) % q_old_freq == 0:
                 self.q_old_network.load_state_dict(self.model.state_dict())
                 loguru_logger.info(f"[Phase-2] Epoch {epoch}: Q_old snapshot updated.")
+
+        # clear the exploration schedule so eval starts greedy
+        self.current_eps = None
 
         # Save Phase 2 checkpoint
         saved_dir = getattr(self.model_config, "saved_dir", "checkpoints")
@@ -716,9 +727,24 @@ class DMORLTrainer(PADPPTrainer):
         buffer = deque(maxlen=self.model_config.buffer_length)
         self.memory_buffer = deque(maxlen=self.model_config.preference_buffer_length)
 
+        # Epsilon-greedy exploration schedule: linearly anneal from eps_start
+        # down to eps_end across the RL epochs. Strong early exploration helps
+        # the policy escape degenerate local optima (e.g. deny/agree spam)
+        # before exploiting. Read by select_action via self.current_eps.
+        eps_start = getattr(self.model_config, 'eps_start', 0.3)
+        eps_end = getattr(self.model_config, 'eps_end', 0.05)
+        n_eps_epochs = max(self.model_config.num_train_rl_epochs - 1, 1)
+
         episode_counter = 0
         for train_step in range(self.model_config.num_train_rl_epochs):
             self.model.train()
+
+            # linear epsilon decay for this epoch
+            frac = train_step / n_eps_epochs
+            self.current_eps = eps_start + (eps_end - eps_start) * frac
+            loguru_logger.info(
+                f"[Curriculum] Epoch {train_step}: epsilon={self.current_eps:.3f}"
+            )
 
             for _ in range(self.model_config.sampled_times):
                 case = np.random.choice(cases)
@@ -774,4 +800,6 @@ class DMORLTrainer(PADPPTrainer):
                 )
                 self.train_rl_step(buffer, action_mapping, optimizer, scheduler)
 
+        # clear the exploration schedule so eval / later phases start fresh
+        self.current_eps = None
         loguru_logger.info("[Curriculum] Phase 1 complete.")

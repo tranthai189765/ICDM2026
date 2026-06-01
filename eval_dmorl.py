@@ -101,9 +101,12 @@ def _episode(trainer, case, simulator, action_mapping, w, skill_name, max_horizo
     done = 0
 
     for t in count():
+        # is_test=True → greedy argmax (no epsilon exploration). Without this
+        # the eval ran epsilon-greedy (10% random actions), injecting random
+        # deny/greet/high-counter turns that depressed r_gain and added noise.
         action, _, _ = trainer.predict(
             state, torch.FloatTensor(w).to(trainer.device),
-            action_mapping, is_computing_reward=False, use_gpi=False,
+            action_mapping, is_test=True, is_computing_reward=False, use_gpi=False,
         )
         state, reward, done, _ = trainer.game.step(
             state, action, trainer.generation_method, simulator,

@@ -153,6 +153,10 @@ def parse_dmorl_args():
                                help='Buyer/seller LLMs append a [[PRICE: x]] tag; compute_reward parses it directly')
     dmorl_parser.add_argument('--fairness_train_scale', type=float, default=None,
                                help='Multiply fairness reward by this during training (e.g. 2.0). Keep 1.0 at eval.')
+    dmorl_parser.add_argument('--eps_start', type=float, default=None,
+                               help='Epsilon-greedy exploration rate at the first RL epoch (default 0.3)')
+    dmorl_parser.add_argument('--eps_end', type=float, default=None,
+                               help='Epsilon-greedy exploration rate at the last RL epoch (default 0.05)')
     dmorl_parser.add_argument('--debug', action='store_true', default=False,
                                help='Print LLM prompts/outputs, per-step rewards/losses, save eval dialogues')
     dmorl_parser.add_argument('--debug_output_dir', type=str, default=None,

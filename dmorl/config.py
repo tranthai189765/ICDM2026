@@ -36,6 +36,10 @@ class DMORLConfig(PADPPConfig):
     use_active_sampling = False        # Rollout under highest-regret w if True
     alpha_rpadpp = 0.5                 # L = (1-α)·L_self + α·L_know
 
+    # ── Exploration schedule (epsilon-greedy, linearly annealed per epoch) ───
+    eps_start = 0.3                    # exploration rate at the first RL epoch
+    eps_end = 0.05                     # exploration rate at the last RL epoch
+
     # ── Legacy DMORL fields kept for compatibility with existing code paths ──
     n_advanced_skills = 0
     n_advanced_train_epochs = 0

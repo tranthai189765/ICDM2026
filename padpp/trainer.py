@@ -1033,7 +1033,12 @@ class PADPPTrainer(Trainer):
             action = logits.argmax()
             return action.item(), None
         else:
-            # epsilon greedy
+            # epsilon greedy. self.current_eps (set by the curriculum/RL loop)
+            # overrides the fixed default so exploration can be annealed across
+            # epochs; falls back to the eps argument when no schedule is set.
+            cur = getattr(self, 'current_eps', None)
+            if cur is not None:
+                eps = cur
             p = np.random.random()
             if p < eps:
                 action = np.random.randint(0, logits.size(-1))
