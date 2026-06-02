@@ -195,9 +195,10 @@ class NegotiationGameConfig(GameConfig):
     # smaller [-0.5, 0.5] range vs gain/deal's [-1, 1]/{0,1}. Set to 2.0 for
     # training, keep 1.0 for eval so reported r_fair matches the paper.
     fairness_train_scale = 1.0
-    # Per-turn penalty subtracted from every reward component during training
-    # (CLI: --turn_penalty). Restores closing pressure lost by dropping the
-    # avg_turn objective. Keep 0.0 at eval so reported metrics stay clean.
+    # Per-turn penalty subtracted from the DEAL reward component during
+    # training (CLI: --turn_penalty). Gives closing pressure proportional to
+    # the skill's deal weight (Deal/Uniform close, pure Fairness/Gain hold).
+    # Keep 0.0 at eval so reported metrics stay clean.
     turn_penalty = 0.0
     pass
 

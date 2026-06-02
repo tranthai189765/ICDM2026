@@ -751,8 +751,21 @@ class NegotiationGame(Game):
         # PADPP paper (max 0.5).
         fairness = fairness * getattr(self.game_config, 'fairness_train_scale', 1.0)
 
+        # Turn penalty (CLI: --turn_penalty), applied to the DEAL component only.
+        # Without an avg_turn objective the 3-D reward has no closing pressure,
+        # so under the MEAN convention deal-caring skills procrastinate. We add
+        # the penalty to neg_sr (the deal reward): for a simplex preference w,
+        # w·[gain, fair, deal - c] = w·r - w_deal·c, i.e. a per-turn penalty
+        # PROPORTIONAL to how much the skill cares about closing. This pushes
+        # Deal/Uniform to close early while leaving a pure-Fairness or pure-Gain
+        # skill (w_deal = 0) free to hold at the midpoint / lowball — which is
+        # the behaviour that maximises their own objective. Training only;
+        # eval keeps c=0 so reported metrics stay clean.
+        c = getattr(self.game_config, 'turn_penalty', 0.0)
+        if c:
+            neg_sr = neg_sr - c
+
         # PADPP-original reward vector (3 dimensions): [sl_ratio, fairness, neg_sr].
-        # No shaping, no avg_turn objective -- matches the paper exactly.
         reward = []
         if SL_RATIO in self.game_config.objectives:
             reward.append(sl_ratio)
@@ -762,17 +775,6 @@ class NegotiationGame(Game):
             reward.append(neg_sr)
         if AVG_TURN in self.game_config.objectives:
             reward.append(turn_reward)
-
-        # Turn penalty (CLI: --turn_penalty). Without an avg_turn objective the
-        # 3-D reward has no pressure to close, so under the MEAN convention the
-        # agent harvests per-turn gain/fairness by countering forever. Subtract
-        # a constant c from EVERY component: for any simplex preference w,
-        # w·[r - c] = w·r - c, i.e. a uniform per-turn penalty c that pushes the
-        # policy to close early without changing the in-turn action ranking.
-        # Applied only during training (eval keeps c=0 so metrics stay clean).
-        c = getattr(self.game_config, 'turn_penalty', 0.0)
-        if c:
-            reward = [r - c for r in reward]
 
         logger.debug(f"reward={reward} done={done}")
         return reward, done, done
