@@ -1047,7 +1047,15 @@ class PADPPTrainer(Trainer):
                 eps = cur
             p = np.random.random()
             if p < eps:
-                action = np.random.randint(0, logits.size(-1))
+                # Explore only among VALID (un-masked) actions. Masked actions
+                # have logit -inf; sampling uniformly over all indices would let
+                # exploration pick masked duplicates (e.g. greet at bin>0),
+                # polluting the buffer. Restrict the random draw to finite logits.
+                valid = torch.isfinite(logits.view(-1)).nonzero(as_tuple=True)[0]
+                if valid.numel() > 0:
+                    action = valid[np.random.randint(0, valid.numel())].item()
+                else:
+                    action = logits.argmax().item()
             else:
                 action = logits.argmax().item()
             return action, None
