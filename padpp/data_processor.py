@@ -8,7 +8,7 @@ from base.data_processor import DataProcessorForRecommendation, DataProcessorFor
 from base.torch_dataset import BaseTorchDataset
 from utils.game import random_weights
 from config.constants import USER_TOKEN, SYSTEM_TOKEN, GOAL_TOKEN, TOPIC_TOKEN, SEP_TOKEN, PATH_TOKEN, TARGET, \
-    CONTEXT_TOKEN, IGNORE_INDEX, SEEKER_TOKEN, SUPPORTER_TOKEN, BUYER_TOKEN, SELLER_TOKEN
+    CONTEXT_TOKEN, IGNORE_INDEX, SEEKER_TOKEN, SUPPORTER_TOKEN, BUYER_TOKEN, SELLER_TOKEN, PRICE_BEARING_STRATEGIES
 
 
 def generate_bins(low, high, n):
@@ -265,6 +265,15 @@ class PADPPDataProcessorForNegotiation(DataProcessorForNegotiation):
         for i, bin in enumerate(bins):
             if proposed_price >= bin[0] and proposed_price <= bin[1]:
                 bin_label = i
+
+        # Collapse non-price strategies to bin 0. Their generated utterance does
+        # not depend on the bin, so (strategy, bin>0) is a duplicate that the
+        # action mask hides at inference. Keeping the SFT label at bin 0 makes
+        # the supervised target consistent with the masked action space (a
+        # 'deny' that happens to mention a price would otherwise be labelled at
+        # bin>0 — an action the policy can never select).
+        if instance['goal'] not in PRICE_BEARING_STRATEGIES:
+            bin_label = 0
 
         label = action_to_id[(instance['goal'], bin_label)]
         

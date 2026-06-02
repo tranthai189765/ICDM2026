@@ -390,6 +390,13 @@ NEGOTIATION_GOAL2DESCRIPTION = {'greet': 'Please say hello or chat randomly.',
                                 # for standard prompting. There is no instruction for dialogue strategy
                                 'Standard': ""}
 
+# Strategies whose generated utterance actually depends on the price bin. Every
+# other strategy ignores the bin, so its (strategy, bin>0) actions are exact
+# duplicates of (strategy, 0). Used both to mask redundant actions at
+# inference (padpp/trainer.py) and to collapse SFT labels to bin 0 for non-price
+# strategies (padpp/data_processor.py), keeping the two consistent.
+PRICE_BEARING_STRATEGIES = {'propose', 'counter', 'final_offer'}
+
 # a mapping from goal to textual description
 # for the recommendation task
 DURECDIAL_GOAL2DESCRIPTION = {'Ask about weather': 'Please provide information about the weather.',

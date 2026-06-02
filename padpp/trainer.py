@@ -31,7 +31,9 @@ from utils.game import save_conversation_for_human_evaluation
 # so (strategy, bin>0) produces the exact same utterance and reward as
 # (strategy, 0) — a pure duplicate. _build_action_mask keeps only the 19
 # distinct actions (propose/counter x 5 bins + 9 other strategies at bin 0).
-_PRICE_BEARING_STRATEGIES = {'propose', 'counter', 'final_offer'}
+# Single source of truth in config.constants (shared with the SFT data
+# processor so labels and the action mask stay consistent).
+from config.constants import PRICE_BEARING_STRATEGIES as _PRICE_BEARING_STRATEGIES
 
 
 def _build_action_mask(action_mapping, n_actions, device):
