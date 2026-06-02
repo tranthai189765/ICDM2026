@@ -468,13 +468,15 @@ class NegotiationGame(Game):
         goal = action
         # compute the llm-basd assessment
         t = time.time()
-        # BUGFIX (#2): temperature 1.1 made the NLI deal-judge stochastic, so
-        # neg_sr (the deal_rate reward component AND the terminal trigger) was
-        # noisy across identical dialogues. Use temperature=0.0 so the judge is
-        # deterministic — stable reward signal and reproducible terminations.
+        # NLI deal judge at temperature=1.1 to match PADPP-original exactly: the
+        # n=10 diverse judges form a SOFT deal probability (neg_sr = fraction
+        # agreeing). This ensemble soft-labelling is the paper's intended
+        # reward design, not noise — a deterministic single judgment loses the
+        # graded signal and (with FPT's residual non-determinism) wasn't even
+        # truly binary.
         responses = get_llm_based_assessment_for_negotiation(simulated_conversation=state['dialogue_context'],
                                                              n=self.game_config.n,
-                                                             temperature=0.0,
+                                                             temperature=1.1,
                                                              model_type=self.model_type,
                                                              max_tokens=10
                                                              )
