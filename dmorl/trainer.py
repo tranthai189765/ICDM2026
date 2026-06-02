@@ -619,6 +619,12 @@ class DMORLTrainer(PADPPTrainer):
                     1, action_rep.view(-1, 1, 1).expand(Q_all.size(0), 1, n_obj)
                 ).squeeze(1)                                                    # [K*bs, n_obj]
 
+                # Action mask (drop bin-redundant duplicates from target argmax)
+                _use_mask = getattr(self.model_config, 'mask_redundant_actions', True)
+                if _use_mask:
+                    from padpp.trainer import _build_action_mask
+                    _amask = _build_action_mask(action_mapping, action_size, self.device)  # [action_size]
+
                 # === L_self (DDQN scalar TD) ===
                 with torch.no_grad():
                     self.model.eval()
@@ -629,6 +635,8 @@ class DMORLTrainer(PADPPTrainer):
                     # argmax_a (w · Q_target(s', a, w))
                     w_rep_3d = w_rep.unsqueeze(1).expand(-1, action_size, n_obj)
                     scalar_self = (w_rep_3d * Q_next_T).sum(dim=-1)             # [K*bs, n_a]
+                    if _use_mask:
+                        scalar_self = scalar_self.masked_fill(~_amask.unsqueeze(0), float('-inf'))
                     a_star = scalar_self.max(dim=1)[1]                          # [K*bs]
                     Q_next_self = Q_next_T.gather(
                         1, a_star.view(-1, 1, 1).expand(-1, 1, n_obj)
@@ -660,6 +668,9 @@ class DMORLTrainer(PADPPTrainer):
                     # einsum: tmp[k_c, k, b, a] = sum_o w[k,o] * Q[k_c,b,a,o]
                     tmp = torch.einsum('ko,cbao->ckba', w_sampled, Q_next_conv)
                     score, _ = tmp.max(dim=0)                                   # [K, bs, action_size]
+                    if _use_mask:
+                        score = score.masked_fill(
+                            ~_amask.view(1, 1, action_size), float('-inf'))
                     a_teacher = score.max(dim=-1)[1]                            # [K, bs]
 
                     # Evaluate Q_next at sampled w (not w_i) at a_teacher

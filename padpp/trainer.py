@@ -547,6 +547,15 @@ class PADPPTrainer(Trainer):
                          Q_next).sum(dim=-1).view(-1, action_size)
 
                     scalarized_scores = scalarized_scores * cosim
+                    # Respect the action mask when picking the TD-target action,
+                    # otherwise the bootstrap could select a bin-redundant action
+                    # whose Q is never trained (never rolled out) and therefore
+                    # arbitrary. Keeps the target consistent with rollout/argmax.
+                    if getattr(self.model_config, 'mask_redundant_actions', True):
+                        _amask = _build_action_mask(
+                            action_mapping, action_size, scalarized_scores.device)
+                        scalarized_scores = scalarized_scores.masked_fill(
+                            ~_amask.unsqueeze(0), float('-inf'))
                     # get the action-value function of the best action.
                     idx = scalarized_scores.max(1)[1]
                     Q_next_target = Q_next.gather(1, idx.view(-1, 1, 1).expand(idx.size(0),
@@ -608,11 +617,26 @@ class PADPPTrainer(Trainer):
                         torch.bmm(repeated_sample_preference.unsqueeze(1), tmp_Q_prime.unsqueeze(2)).view(-1,
                                                                                                           action_size)
                     # convex envelope Q ids
+                    # Mask bin-redundant actions before the argmax (same reason
+                    # as the PI branch: avoid bootstrapping from untrained
+                    # duplicate-action Q values). Mask the FINAL score so the
+                    # masked entries are -inf (never selected); masking the two
+                    # factors separately could give -inf * -inf = +inf.
+                    _use_mask = getattr(self.model_config, 'mask_redundant_actions', True)
+                    if _use_mask:
+                        _amask = _build_action_mask(
+                            action_mapping, action_size, scalarized_scores.device)
                     if self.game_config.name == NEGOTIATION:
-                        idx = (co_sim * scalarized_scores).max(1)[1]
+                        gpi_score = co_sim * scalarized_scores
+                        if _use_mask:
+                            gpi_score = gpi_score.masked_fill(~_amask.unsqueeze(0), float('-inf'))
+                        idx = gpi_score.max(1)[1]
 
                     elif self.game_config.name == RECOMMENDATION:
-                        idx = scalarized_scores.max(1)[1]
+                        gpi_score = scalarized_scores
+                        if _use_mask:
+                            gpi_score = gpi_score.masked_fill(~_amask.unsqueeze(0), float('-inf'))
+                        idx = gpi_score.max(1)[1]
 
                     # Bs, n_sample, n_sample, 2 x Bs, n_sample, n_sample, n_action, 2
                     # scalarized_Q_prime = torch.matmul(repeated_sample_preference, Q_prime.permute(0, 1, 3))
