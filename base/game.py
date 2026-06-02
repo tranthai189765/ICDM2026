@@ -763,6 +763,17 @@ class NegotiationGame(Game):
         if AVG_TURN in self.game_config.objectives:
             reward.append(turn_reward)
 
+        # Turn penalty (CLI: --turn_penalty). Without an avg_turn objective the
+        # 3-D reward has no pressure to close, so under the MEAN convention the
+        # agent harvests per-turn gain/fairness by countering forever. Subtract
+        # a constant c from EVERY component: for any simplex preference w,
+        # w·[r - c] = w·r - c, i.e. a uniform per-turn penalty c that pushes the
+        # policy to close early without changing the in-turn action ranking.
+        # Applied only during training (eval keeps c=0 so metrics stay clean).
+        c = getattr(self.game_config, 'turn_penalty', 0.0)
+        if c:
+            reward = [r - c for r in reward]
+
         logger.debug(f"reward={reward} done={done}")
         return reward, done, done
 

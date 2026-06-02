@@ -87,6 +87,8 @@ def parse_eval_args():
                        help='Buyer/seller LLMs append a [[PRICE: x]] tag; compute_reward parses it directly')
     extra.add_argument('--fairness_train_scale', type=float, default=1.0,
                        help='Keep 1.0 at eval so reported r_fair matches the paper (max 0.5).')
+    extra.add_argument('--turn_penalty', type=float, default=0.0,
+                       help='Keep 0.0 at eval so reported metrics stay clean.')
     extra_args, _ = extra.parse_known_args(sys.argv[1:])
     return base_args, vars(extra_args)
 
@@ -240,6 +242,7 @@ if __name__ == '__main__':
         'use_llm_price_extraction': eval_overrides.get('use_llm_price_extraction', False),
         'use_price_tag': eval_overrides.get('use_price_tag', False),
         'fairness_train_scale': eval_overrides.get('fairness_train_scale', 1.0),
+        'turn_penalty': eval_overrides.get('turn_penalty', 0.0),
     })
 
     # ── Dataset ────────────────────────────────────────────────────────────

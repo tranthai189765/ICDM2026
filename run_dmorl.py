@@ -153,6 +153,8 @@ def parse_dmorl_args():
                                help='Buyer/seller LLMs append a [[PRICE: x]] tag; compute_reward parses it directly')
     dmorl_parser.add_argument('--fairness_train_scale', type=float, default=None,
                                help='Multiply fairness reward by this during training (e.g. 2.0). Keep 1.0 at eval.')
+    dmorl_parser.add_argument('--turn_penalty', type=float, default=None,
+                               help='Per-turn penalty subtracted from every reward component during training (e.g. 0.05). Keep 0.0 at eval.')
     dmorl_parser.add_argument('--eps_start', type=float, default=None,
                                help='Epsilon at epoch 0 (default 1.0)')
     dmorl_parser.add_argument('--eps_end', type=float, default=None,
@@ -198,6 +200,8 @@ if __name__ == '__main__':
         'use_price_tag': dmorl_overrides.get('use_price_tag', False),
         'fairness_train_scale': (dmorl_overrides.get('fairness_train_scale')
                                  if dmorl_overrides.get('fairness_train_scale') is not None else 1.0),
+        'turn_penalty': (dmorl_overrides.get('turn_penalty')
+                         if dmorl_overrides.get('turn_penalty') is not None else 0.0),
     })
 
     # ── Datasets ──────────────────────────────────────────────────────────────
