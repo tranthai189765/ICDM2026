@@ -36,6 +36,10 @@ class DMORLConfig(PADPPConfig):
     use_active_sampling = False        # Rollout under highest-regret w if True
     alpha_rpadpp = 0.5                 # L = (1-α)·L_self + α·L_know
 
+    # Mask bin-redundant duplicate actions (non-price strategies at bin>0 are
+    # identical to bin 0). Shrinks the 55-action grid to 19 distinct actions.
+    mask_redundant_actions = True
+
     # ── Exploration schedule (epsilon-greedy: linear decay then floor) ───────
     # epsilon decays linearly from eps_start to eps_end across the first
     # eps_decay_epochs epochs, then stays at eps_end for the rest.

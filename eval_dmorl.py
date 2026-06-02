@@ -89,6 +89,9 @@ def parse_eval_args():
                        help='Keep 1.0 at eval so reported r_fair matches the paper (max 0.5).')
     extra.add_argument('--turn_penalty', type=float, default=0.0,
                        help='Keep 0.0 at eval so reported metrics stay clean.')
+    extra.add_argument('--no_mask_redundant', dest='mask_redundant_actions',
+                       action='store_false', default=True,
+                       help='Disable masking of bin-redundant duplicate actions (match training)')
     extra_args, _ = extra.parse_known_args(sys.argv[1:])
     return base_args, vars(extra_args)
 
@@ -288,6 +291,7 @@ if __name__ == '__main__':
     model_config.set_params(scenario_params)
     # Inference-only: never run SFT/RL
     model_config.set_params({'run_sft': False, 'run_rlt': False, 'test_phase': True})
+    model_config.set_params({'mask_redundant_actions': eval_overrides.get('mask_redundant_actions', True)})
 
     game = game_class(game_config=game_config, dataset_config=dataset_config)
 

@@ -26,6 +26,32 @@ from logger.file_logger import FileLogger
 from utils.game import save_conversation_for_human_evaluation
 
 
+# Only these strategies USE the price bin in response generation (the generated
+# utterance changes with the bin). For every other strategy the bin is ignored,
+# so (strategy, bin>0) produces the exact same utterance and reward as
+# (strategy, 0) — a pure duplicate. _build_action_mask keeps only the 19
+# distinct actions (propose/counter x 5 bins + 9 other strategies at bin 0).
+_PRICE_BEARING_STRATEGIES = {'propose', 'counter', 'final_offer'}
+
+
+def _build_action_mask(action_mapping, n_actions, device):
+    """Return a 1-D bool mask over the flat action space (True = selectable).
+
+    Masks out bin-redundant duplicates: non-price strategies at bin > 0 are
+    identical to their bin-0 form, so only bin 0 is kept for them; price-bearing
+    strategies keep all bins.
+    """
+    if isinstance(action_mapping, tuple):
+        action_mapping = action_mapping[0]
+    mask = torch.zeros(n_actions, device=device, dtype=torch.bool)
+    for (strategy, bin_idx), idx in action_mapping.items():
+        if idx >= n_actions:
+            continue
+        if strategy in _PRICE_BEARING_STRATEGIES or bin_idx == 0:
+            mask[idx] = True
+    return mask
+
+
 from utils.game import random_weights
 
 from collections import deque
@@ -980,8 +1006,14 @@ class PADPPTrainer(Trainer):
                         1).permute(0, 2, 1)).squeeze(-1)
                     loguru_logger.debug(f"w={batch['w']} logits={logits}")
 
-                # PADPP-original: no action mask — every (strategy, bin) is a
-                # selectable action.
+                # Mask bin-redundant duplicate actions (non-price strategies at
+                # bin > 0 produce the same utterance/reward as bin 0). Keeps the
+                # 19 distinct actions. Toggle with model_config.mask_redundant_actions.
+                if getattr(self.model_config, 'mask_redundant_actions', True):
+                    action_mask = _build_action_mask(
+                        action_mapping, logits.size(-1), logits.device)
+                    logits = logits.masked_fill(~action_mask, float('-inf'))
+
                 action, log_prob = self.select_action(logits, is_test=is_test)
                 action = inverse_action_mapping[action]
                 loguru_logger.debug(f"action={action} log_prob={log_prob}")

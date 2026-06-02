@@ -155,6 +155,9 @@ def parse_dmorl_args():
                                help='Multiply fairness reward by this during training (e.g. 2.0). Keep 1.0 at eval.')
     dmorl_parser.add_argument('--turn_penalty', type=float, default=None,
                                help='Per-turn penalty subtracted from every reward component during training (e.g. 0.05). Keep 0.0 at eval.')
+    dmorl_parser.add_argument('--no_mask_redundant', dest='mask_redundant_actions',
+                               action='store_false', default=None,
+                               help='Disable masking of bin-redundant duplicate actions (default: masked)')
     dmorl_parser.add_argument('--eps_start', type=float, default=None,
                                help='Epsilon at epoch 0 (default 1.0)')
     dmorl_parser.add_argument('--eps_end', type=float, default=None,
