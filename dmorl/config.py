@@ -40,6 +40,11 @@ class DMORLConfig(PADPPConfig):
     # identical to bin 0). Shrinks the 55-action grid to 19 distinct actions.
     mask_redundant_actions = True
 
+    # Class-balanced SFT loss: weight each action by inverse-sqrt strategy
+    # frequency so the model learns minority strategies (esp. agree) instead of
+    # collapsing to the dominant counter/inquire/greet classes.
+    sft_class_balanced = False
+
     # Best-checkpoint selection in Phase 1: every eval_every_epochs epochs,
     # estimate greedy SR over quick_eval_episodes dialogues per anchor and save
     # dmorl_phase1_best.pth when it improves. 0 disables (only the last epoch is

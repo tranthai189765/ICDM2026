@@ -332,8 +332,30 @@ class PADPPTrainer(Trainer):
         lr_scheduler = self.create_scheduler(
             optimizer, self.model_config.num_warmup_steps, max_train_steps)
 
-        # create the loss function
-        self.criterion = self.create_criterion()
+        # create the loss function. Optionally class-balanced: the raw goal
+        # distribution is dominated by counter/inquire/greet while agree (and
+        # disagree/deny) are minorities, so a plain cross-entropy biases the SFT
+        # policy away from agree. When sft_class_balanced is set we weight each
+        # action by inverse-sqrt strategy frequency so the model learns to agree.
+        if getattr(self.model_config, 'sft_class_balanced', False):
+            from collections import Counter
+            goal_counts = Counter(inst['goal'] for inst in train_instances)
+            n_classes = len(action_mapping)
+            weights = torch.ones(n_classes)
+            total = float(sum(goal_counts.values()))
+            n_goals = max(len(goal_counts), 1)
+            for key, aid in action_mapping.items():
+                goal = key[0] if isinstance(key, tuple) else key
+                c = goal_counts.get(goal, 0)
+                if c > 0 and aid < n_classes:
+                    weights[aid] = (total / (n_goals * c)) ** 0.5
+            self.criterion = torch.nn.CrossEntropyLoss(weight=weights.to(self.device))
+            loguru_logger.info(
+                f"[SFT] class-balanced loss enabled: weight range "
+                f"[{float(weights.min()):.2f}, {float(weights.max()):.2f}]"
+            )
+        else:
+            self.criterion = self.create_criterion()
 
         # progress bar
         self.progress_bar = tqdm(

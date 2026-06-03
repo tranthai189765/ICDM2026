@@ -99,9 +99,25 @@ class CraiglistBargain(NegotiationDataset):
                 # if the last utt of the conversation
                 # if the last sentence is system response
                 if i == len(conv['dialog']) - 1:
-                    # if the last utt is system response
-                    # no more transition
-                    # we do not consider this instance
+                    # The last utterance is a system (buyer) turn — typically the
+                    # buyer AGREEing to close the deal. The original PADPP dropped
+                    # it ("no more transition"), but that excludes most
+                    # deal-closing 'agree' labels, so the SFT policy rarely learns
+                    # to agree (and RL inherits that bias). It is still a valid
+                    # SFT (context -> action) example, so we keep it as a TERMINAL
+                    # instance (no next_state; SFT never uses next_state anyway).
+                    terminal_instance = {
+                        "conv_id": conv_id,
+                        "response": utt['text'],
+                        "goal": goal,
+                        "pre_goals": copy.deepcopy(goals),
+                        "dialogue_context": copy.deepcopy(utts),
+                        "task_background": copy.deepcopy(task_background),
+                        "done": 1,
+                        "usr_response": "",
+                    }
+                    if len(utts) > 0:
+                        instances.append(terminal_instance)
                     break
                 # the second last turn
                 elif i == len(conv['dialog']) - 2:
