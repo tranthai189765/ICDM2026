@@ -749,13 +749,20 @@ class DMORLTrainer(PADPPTrainer):
 
     def _quick_sr_eval(self, cases, simulators, action_mapping, weights,
                         n_each, max_horizon):
-        """Greedy (is_test=True) success-rate estimate over a few dialogues per
-        weight. Used to pick the best epoch instead of blindly taking the last."""
+        """Greedy (is_test=True) estimate over a few dialogues per weight.
+
+        Returns (mean_sr, mean_wsum_return):
+          - mean_sr: fraction of dialogues that closed a deal (done==1).
+          - mean_wsum_return: average per-episode scalarised return
+            sum_t (w · r_t) — exactly the objective the low policy optimises
+            (with the active fairness scale / turn penalty applied by the game).
+        """
         self.model.eval()
         successes, total = 0, 0
+        wsum_returns = []
         with torch.no_grad():
             for w in weights:
-                wv = np.array(w)
+                wv = np.array(w, dtype=float)
                 w_t = torch.FloatTensor(wv).to(self.device)
                 for _ in range(n_each):
                     case = np.random.choice(cases)
@@ -763,6 +770,7 @@ class DMORLTrainer(PADPPTrainer):
                     state = self.game.reset(case, sim)
                     state['w'] = wv
                     done = 0
+                    ep_wsum = 0.0
                     for t in count():
                         action, _, _ = self.predict(
                             state, w_t, action_mapping, is_test=True,
@@ -770,12 +778,18 @@ class DMORLTrainer(PADPPTrainer):
                         )
                         state, reward, done, _ = self.game.step(
                             state, action, self.generation_method, sim)
+                        rvec = reward if isinstance(reward, list) else [float(reward)]
+                        k = min(len(rvec), len(wv))
+                        ep_wsum += float(np.dot(wv[:k], rvec[:k]))
                         if done or t >= max_horizon - 1:
                             break
                     successes += int(done == 1)
                     total += 1
+                    wsum_returns.append(ep_wsum)
         self.model.train()
-        return successes / max(total, 1)
+        mean_sr = successes / max(total, 1)
+        mean_wsum = sum(wsum_returns) / max(len(wsum_returns), 1)
+        return mean_sr, mean_wsum
 
     # ═════════════════════════════════════════════════════════════════════════
     # Internal: Curriculum RLT (Phase 1)
@@ -812,8 +826,15 @@ class DMORLTrainer(PADPPTrainer):
         # Best-checkpoint selection: the greedy policy at the LAST epoch can be
         # worse than a mid-training epoch (it may collapse to e.g. counter-only,
         # never agreeing). When eval_every>0 we periodically estimate greedy SR
-        # and keep the best checkpoint separately.
+        # AND the mean scalarised return, and keep two best checkpoints:
+        #   *_best.pth       → highest greedy SR
+        #   *_best_wsum.pth  → highest mean weighted-sum return per episode
         best_sr = -1.0
+        best_wsum = -math.inf
+        best_wsum_path = None
+        if best_ckpt_path:
+            base, ext = os.path.splitext(best_ckpt_path)
+            best_wsum_path = base + "_wsum" + ext
         max_horizon = getattr(self.game_config, "max_horizon", 10)
 
         episode_counter = 0
@@ -879,25 +900,35 @@ class DMORLTrainer(PADPPTrainer):
                 )
                 self.train_rl_step(buffer, action_mapping, optimizer, scheduler)
 
-            # Periodic greedy-SR eval → keep the best checkpoint.
+            # Periodic greedy eval → keep two best checkpoints (SR and wsum).
             if (eval_every and best_eval_weights is not None and best_ckpt_path
                     and (train_step + 1) % eval_every == 0):
-                sr = self._quick_sr_eval(
+                sr, wsum = self._quick_sr_eval(
                     cases, simulators, action_mapping,
                     best_eval_weights, eval_n, max_horizon)
                 loguru_logger.info(
                     f"[Curriculum] Epoch {train_step}: greedy SR={sr:.3f} "
-                    f"(best so far={max(best_sr, 0):.3f})"
+                    f"wsum_return={wsum:.3f} "
+                    f"(best SR={max(best_sr, 0):.3f}, best wsum={best_wsum if best_wsum > -math.inf else 0:.3f})"
                 )
                 if sr > best_sr:
                     best_sr = sr
                     self.save_model(best_ckpt_path)
                     loguru_logger.info(
-                        f"[Curriculum] New best (SR={sr:.3f}) → saved {best_ckpt_path}"
+                        f"[Curriculum] New best SR={sr:.3f} → saved {best_ckpt_path}"
+                    )
+                if best_wsum_path and wsum > best_wsum:
+                    best_wsum = wsum
+                    self.save_model(best_wsum_path)
+                    loguru_logger.info(
+                        f"[Curriculum] New best wsum={wsum:.3f} → saved {best_wsum_path}"
                     )
 
         # clear the exploration schedule so eval / later phases start fresh
         self.current_eps = None
         if best_sr >= 0:
-            loguru_logger.info(f"[Curriculum] Best greedy SR over training = {best_sr:.3f}")
+            loguru_logger.info(
+                f"[Curriculum] Best greedy SR={best_sr:.3f}, "
+                f"best wsum_return={best_wsum if best_wsum > -math.inf else 0:.3f}"
+            )
         loguru_logger.info("[Curriculum] Phase 1 complete.")

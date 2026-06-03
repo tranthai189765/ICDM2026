@@ -230,8 +230,11 @@ Per run, the checkpoint directory
 
 | File | Content |
 |---|---|
-| `dmorl_phase1.pth` | Phase 1 anchor-curriculum weights |
-| `dmorl_phase2.pth` | Phase 2 R-PADPP weights |
+| `model.pth` | SFT weights (best dev loss), if SFT ran |
+| `dmorl_phase1.pth` | Phase 1 anchor-curriculum weights — **last epoch** |
+| `dmorl_phase1_best.pth` | Phase 1 — epoch with best greedy **SR** (only if `--eval_every_epochs > 0`) |
+| `dmorl_phase1_best_wsum.pth` | Phase 1 — epoch with best mean **weighted-sum return** per episode (only if `--eval_every_epochs > 0`) |
+| `dmorl_phase2.pth` | Phase 2 R-PADPP weights — last epoch |
 | `training_losses.csv` | per-update: `global_step, phase, loss, L_self, L_know` |
 | `training_rewards.csv` | per-step: `epoch, episode, phase, skill, action, reward vec, weight, weighted_sum` |
 | `regret_log.csv` | per epoch: candidate `w`, regret, admitted flag |
