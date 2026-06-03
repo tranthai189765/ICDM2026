@@ -291,51 +291,21 @@ _PRICE_PATTERN = re.compile(r"\$?\d[\d,]*\.?\d*")
 
 
 def _seller_has_offered_price(state) -> bool:
-    """Return True only if the seller has made a real counter-offer DURING
-    negotiation. The game initialises dialogue_context with a fixed pair
-    [assistant: 'how much?', user: 'this is a good X and price is $N'] —
-    that opening listing is dataset boilerplate, not a real negotiated
-    offer. Treating it as one lets 'agree' at the very first agent turn
-    capitulate to the seller's listed price (sl_ratio ~ 0).
+    """Return True if the seller has stated a price anywhere in the dialogue.
 
-    We skip the first two boilerplate turns and only count a user turn as
-    "a real offer" if it appears at index >= 2 (i.e. user response AFTER
-    the agent's first negotiating move)."""
+    This INCLUDES the two opening boilerplate turns: the game initialises
+    dialogue_context with [assistant: 'how much?', user: 'this is a good X and
+    its price is $N']. That listing price counts as a seller-offered price, so
+    'agree' always has a concrete seller price to accept (the listing at the
+    very first turn, or a later counter-offer). The policy decides WHEN to
+    agree; the reward (sl_ratio) penalises agreeing at the full listing."""
     dialogue = state.get('dialogue_context', [])
-    for turn in dialogue[2:]:
+    for turn in dialogue:
         if turn.get('role') == 'user':
             content = turn.get('content', '') or ''
             if _PRICE_PATTERN.search(content):
                 return True
     return False
-
-
-def _last_seller_offer_price(state):
-    """Return the seller's most recent OFFERED price during negotiation as a
-    float, or None. Skips the 2 boilerplate turns (the listing). Prefers the
-    price-tag value (state['_seller_declared_price'], set when --use_price_tag)
-    and otherwise regex-extracts the first price in the latest seller turn.
-
-    Used to substitute the real number into the 'agree' prompt so the agent
-    accepts the EXACT seller price instead of leaving a <their last price>
-    placeholder for the LLM to (unreliably) fill in itself."""
-    tagged = state.get('_seller_declared_price')
-    if tagged is not None:
-        try:
-            return float(tagged)
-        except (TypeError, ValueError):
-            pass
-    dialogue = state.get('dialogue_context', [])
-    for turn in reversed(dialogue[2:]):
-        if turn.get('role') == 'user':
-            m = _PRICE_PATTERN.search(turn.get('content', '') or '')
-            if m:
-                raw = m.group(0).replace('$', '').replace(',', '')
-                try:
-                    return float(raw)
-                except ValueError:
-                    continue
-    return None
 
 
 def construct_prompt_for_chat_gpt_response_generation_negotiation(state, prompt):
@@ -387,16 +357,7 @@ def construct_prompt_for_chat_gpt_response_generation_negotiation(state, prompt)
                 # When this happens we fall back to 'propose' so the agent must
                 # actually open the negotiation instead of capitulating.
                 has_seller_offer = _seller_has_offered_price(state)
-                _seller_offer_price = _last_seller_offer_price(state) if has_seller_offer else None
-                if has_seller_offer and _seller_offer_price is not None:
-                    # Substitute the REAL seller price so the accept is exact and
-                    # the NLI judge sees an unambiguous deal (no LLM guessing).
-                    _p = int(round(_seller_offer_price))
-                    goal_description = (
-                        f". Please clearly ACCEPT the seller's most recent offered price of ${_p}. "
-                        f"State exactly 'I accept your offer of ${_p}.' and do not propose a different price."
-                    )
-                elif has_seller_offer:
+                if has_seller_offer:
                     goal_description = (
                         ". Please clearly ACCEPT the seller's most recent offered price. "
                         "State 'I accept your offer of $<their last price>' and do not propose a different price."
