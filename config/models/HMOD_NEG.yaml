@@ -1,0 +1,54 @@
+# H-MOD config for Negotiation scenario.
+# This reuses the DMORL/PADPP Q-network trainer, but replaces the controller
+# with buyer-objective skill discovery and dynamic W self-reflection.
+tokenizer: roberta-large
+plm: roberta-large
+lm_size: 1024
+per_device_train_batch_size: 16
+per_device_eval_batch_size: 16
+max_sequence_length: 512
+cached_dir: "cache/MODPL/"
+weight_decay: 0.01
+learning_rate: 0.00005
+num_warmup_steps: 3000
+gradient_accumulation_steps: 1
+num_train_epochs: 2
+dropout: 0.1
+max_grad_norm: 5
+run_sft: true
+run_rlt: true
+run_online_eval: true
+run_offline_eval: true
+num_train_rl_epochs: 10
+train_rl_batch_size: 128
+sampled_times: 50
+freeze_preference_backbone: true
+objective_embedding_size: 6
+num_train_q_network_epochs: 20
+buffer_length: 2000
+warmup_steps: 30
+n_basic_skills: 5
+n_advanced_skills: 5
+n_skill_train_epochs: 10
+n_advanced_train_epochs: 10
+use_dynamic_weight: true
+dynamic_weight_horizon: 3
+use_hints: true
+hints_file: "hmod_hints_neg.json"
+skills_file: "hmod_skills_neg.json"
+run_curriculum: true
+force_rediscover_skills: false
+hmod_enabled: true
+hmod_objective_file: "config/scenario/hmod_buyer_objectives.py"
+hmod_objective_id: null
+hmod_phase2_dynamic_training: true
+hmod_controller_mode: "rule_scaffold"  # option 1: fast deterministic test path
+hmod_macro_goal: null
+hmod_llm_model: null       # option 2 defaults to DEEPINFRA_MODEL from .env
+hmod_llm_api_key: null
+hmod_llm_api_key_env: "DEEPINFRA_API_KEY"
+hmod_llm_base_url: null    # option 2 defaults to DEEPINFRA_BASE_URL from .env
+hmod_llm_temperature: 0.0
+hmod_llm_max_tokens: 500
+hmod_llm_fallback_to_rule: false
+saved_dir: "checkpoints/hmod_neg"

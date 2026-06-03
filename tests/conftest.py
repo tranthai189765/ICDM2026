@@ -5,6 +5,7 @@ import sys
 import os
 import types
 import importlib.machinery
+import importlib.util
 from unittest.mock import MagicMock
 
 # ── Project root on sys.path (no setup.py) ────────────────────────────────────
@@ -56,7 +57,7 @@ _LOCAL_STUBS = [
     "peft",
 ]
 for _pkg in _LOCAL_STUBS:
-    if _pkg not in sys.modules:
+    if _pkg not in sys.modules and importlib.util.find_spec(_pkg) is None:
         sys.modules[_pkg] = _make_stub(_pkg)
 
 import pytest
@@ -161,4 +162,6 @@ def make_trainer(
     trainer.model = MagicMock()
     trainer.game = MagicMock()
     trainer.memory_buffer = []
+    trainer.save_model = MagicMock()
+    trainer._eval_basic_skills_per_skill = MagicMock()
     return trainer

@@ -1,0 +1,136 @@
+{
+  "basic": [
+    {
+      "name": "AGGRESSIVE_SAVINGS_THEN_RECOVERY",
+      "description": "Push hard for savings early, then recover the deal if seller firmness or walkaway risk appears.",
+      "weight_vector": [
+        0.72,
+        0.1,
+        0.13,
+        0.05
+      ],
+      "type": "basic",
+      "source": "hmod_buyer_objective",
+      "cluster": "PRICE_GAIN"
+    },
+    {
+      "name": "URGENT_GIFT_WITH_HARD_CEILING",
+      "description": "Buy quickly for a time-sensitive need, but treat the maximum acceptable price as a hard constraint.",
+      "weight_vector": [
+        0.24,
+        0.16,
+        0.48,
+        0.12
+      ],
+      "type": "basic",
+      "source": "hmod_buyer_objective",
+      "cluster": "FAST_PURCHASE"
+    },
+    {
+      "name": "QUALITY_RISK_THEN_PRICE_PUSH",
+      "description": "Start by reducing product-quality risk, then use verified condition information to negotiate price.",
+      "weight_vector": [
+        0.28,
+        0.4,
+        0.22,
+        0.1
+      ],
+      "type": "basic",
+      "source": "hmod_buyer_objective",
+      "cluster": "RISK_AWARE_PURCHASE"
+    },
+    {
+      "name": "BACKUP_OPTION_PRESSURE_CONTROL",
+      "description": "Use a competing alternative to bargain, but avoid losing this seller if their price becomes competitive.",
+      "weight_vector": [
+        0.64,
+        0.12,
+        0.16,
+        0.08
+      ],
+      "type": "basic",
+      "source": "hmod_buyer_objective",
+      "cluster": "WALKAWAY_DISCIPLINE"
+    },
+    {
+      "name": "SCARCITY_ADAPTIVE_BUYER",
+      "description": "Handle scarcity pressure from a seller who claims another buyer is ready.",
+      "weight_vector": [
+        0.36000000000000004,
+        0.24,
+        0.30000000000000004,
+        0.1
+      ],
+      "type": "basic",
+      "source": "hmod_buyer_objective",
+      "cluster": "SCARCITY_RESPONSE"
+    }
+  ],
+  "advanced": [
+    {
+      "name": "HMOD_PRICE_GAIN",
+      "description": "Composite buyer skill for macro cluster PRICE_GAIN, derived from objective-level W vectors.",
+      "weight_vector": [
+        0.71,
+        0.1,
+        0.14,
+        0.05
+      ],
+      "type": "advanced",
+      "source": "hmod_macro_cluster",
+      "cluster": "PRICE_GAIN"
+    },
+    {
+      "name": "HMOD_FAST_PURCHASE",
+      "description": "Composite buyer skill for macro cluster FAST_PURCHASE, derived from objective-level W vectors.",
+      "weight_vector": [
+        0.24,
+        0.16,
+        0.48,
+        0.12
+      ],
+      "type": "advanced",
+      "source": "hmod_macro_cluster",
+      "cluster": "FAST_PURCHASE"
+    },
+    {
+      "name": "HMOD_FAIR_VALUE",
+      "description": "Composite buyer skill for macro cluster FAIR_VALUE, derived from objective-level W vectors.",
+      "weight_vector": [
+        0.24000000000000002,
+        0.44000000000000006,
+        0.23,
+        0.09000000000000002
+      ],
+      "type": "advanced",
+      "source": "hmod_macro_cluster",
+      "cluster": "FAIR_VALUE"
+    },
+    {
+      "name": "HMOD_RISK_AWARE_PURCHASE",
+      "description": "Composite buyer skill for macro cluster RISK_AWARE_PURCHASE, derived from objective-level W vectors.",
+      "weight_vector": [
+        0.28,
+        0.4,
+        0.22,
+        0.1
+      ],
+      "type": "advanced",
+      "source": "hmod_macro_cluster",
+      "cluster": "RISK_AWARE_PURCHASE"
+    },
+    {
+      "name": "HMOD_WALKAWAY_DISCIPLINE",
+      "description": "Composite buyer skill for macro cluster WALKAWAY_DISCIPLINE, derived from objective-level W vectors.",
+      "weight_vector": [
+        0.6599999999999999,
+        0.12666666666666665,
+        0.13666666666666666,
+        0.07666666666666666
+      ],
+      "type": "advanced",
+      "source": "hmod_macro_cluster",
+      "cluster": "WALKAWAY_DISCIPLINE"
+    }
+  ]
+}

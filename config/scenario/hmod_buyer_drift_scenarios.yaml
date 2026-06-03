@@ -1,0 +1,315 @@
+scenarios:
+  - id: static_fair_repeat_seller_001
+    macro_goal: "Buy at a fair repeat-customer price. Do not squeeze the seller too hard because future relationship value matters."
+    buyer_intent_id: FAIR_RELATIONSHIP_REPEAT_BUYER
+    static_w: [0.24, 0.46, 0.22, 0.08]
+    buyer_constraints:
+      max_acceptable_price_ratio: 0.62
+      target_price_ratio: 0.44
+      turn_limit: 8
+    seller_persona:
+      type: cooperative_repeat_seller
+      description: "A polite seller who starts high but accepts a fair midpoint if treated respectfully."
+      initial_ask_ratio: 0.95
+      neutral_accept_ratio: 0.54
+      post_drift_ask_ratio: 0.61
+      final_ask_ratio: 0.58
+    initial_intent: neutral
+    drift_mode: static_no_drift
+    drift_trigger: {}
+    turn_limit: 8
+    expected_weight_shift: {}
+    case:
+      item_name: "used laptop"
+      buyer_price: 300
+      seller_price: 600
+      seller_item_description: "A clean used laptop with charger, good battery health, and no visible damage."
+      buyer_item_description: "A buyer who may purchase accessories from the same seller later."
+
+  - id: hard_lowball_to_firm_bike_001
+    macro_goal: "Start by trying to save as much as possible, but if the seller becomes firm, recover the negotiation and close below the ceiling."
+    buyer_intent_id: AGGRESSIVE_SAVINGS_THEN_RECOVERY
+    static_w: [0.72, 0.10, 0.13, 0.05]
+    buyer_constraints:
+      max_acceptable_price_ratio: 0.62
+      target_price_ratio: 0.32
+      turn_limit: 9
+    seller_persona:
+      type: firm_after_lowballs
+      description: "A seller who negotiates at first but becomes firm after repeated low offers."
+      initial_ask_ratio: 0.98
+      neutral_accept_ratio: 0.58
+      post_drift_ask_ratio: 0.61
+      final_ask_ratio: 0.59
+    initial_intent: neutral
+    drift_mode: gradual_firming
+    drift_trigger:
+      round_without_deal: 3
+      low_offer_streak: 2
+      low_offer_multiplier: 0.88
+    turn_limit: 9
+    expected_weight_shift:
+      sl_ratio: down
+      fairness: up
+      deal_rate: up
+    case:
+      item_name: "mountain bike"
+      buyer_price: 120
+      seller_price: 280
+      seller_item_description: "A tuned mountain bike with new brake pads and visible cosmetic scratches."
+      buyer_item_description: "A buyer comparing several used bikes and pushing for surplus."
+
+  - id: urgent_gift_final_offer_camera_001
+    macro_goal: "Buy quickly for a birthday gift today, but never exceed the hard budget ceiling."
+    buyer_intent_id: URGENT_GIFT_WITH_HARD_CEILING
+    static_w: [0.24, 0.16, 0.48, 0.12]
+    buyer_constraints:
+      max_acceptable_price_ratio: 0.66
+      target_price_ratio: 0.48
+      turn_limit: 8
+    seller_persona:
+      type: final_offer_seller
+      description: "A seller with another interested buyer who may suddenly give a take-it-or-leave-it price."
+      initial_ask_ratio: 0.96
+      neutral_accept_ratio: 0.62
+      post_drift_ask_ratio: 0.70
+      final_ask_ratio: 0.64
+    initial_intent: neutral
+    drift_mode: abrupt_final_offer
+    drift_trigger:
+      turn_id: 4
+    turn_limit: 8
+    expected_weight_shift:
+      sl_ratio: down
+      deal_rate: up
+      avg_turn: up
+    case:
+      item_name: "camera lens"
+      buyer_price: 150
+      seller_price: 360
+      seller_item_description: "A sharp prime lens with clean glass, original caps, and another buyer asking about it."
+      buyer_item_description: "A buyer who needs the lens as a gift today and has a strict budget."
+
+  - id: quality_check_then_price_push_tablet_001
+    macro_goal: "Inspect quality first, then use the condition information to negotiate a lower safe price."
+    buyer_intent_id: QUALITY_RISK_THEN_PRICE_PUSH
+    static_w: [0.28, 0.40, 0.22, 0.10]
+    buyer_constraints:
+      max_acceptable_price_ratio: 0.60
+      target_price_ratio: 0.38
+      turn_limit: 9
+    seller_persona:
+      type: guarded_quality_seller
+      description: "A seller who answers condition questions but becomes firm if the buyer keeps using defects to push too low."
+      initial_ask_ratio: 0.94
+      neutral_accept_ratio: 0.57
+      post_drift_ask_ratio: 0.60
+      final_ask_ratio: 0.59
+    initial_intent: neutral
+    drift_mode: gradual_firming
+    drift_trigger:
+      round_without_deal: 4
+      low_offer_streak: 2
+      low_offer_multiplier: 0.86
+    turn_limit: 9
+    expected_weight_shift:
+      sl_ratio: up
+      fairness: down
+      deal_rate: down
+    case:
+      item_name: "used tablet"
+      buyer_price: 90
+      seller_price: 220
+      seller_item_description: "A used tablet with minor screen wear, charger included, and battery health not fully verified."
+      buyer_item_description: "A buyer who must verify condition before treating the price as acceptable."
+
+  - id: backup_option_walkaway_console_001
+    macro_goal: "Use a backup option to negotiate, but stop pressuring if this seller gets close enough and starts to walk away."
+    buyer_intent_id: BACKUP_OPTION_PRESSURE_CONTROL
+    static_w: [0.64, 0.12, 0.16, 0.08]
+    buyer_constraints:
+      max_acceptable_price_ratio: 0.61
+      target_price_ratio: 0.34
+      turn_limit: 9
+    seller_persona:
+      type: impatient_console_seller
+      description: "An impatient seller who dislikes repeated backup-option pressure and threatens to sell elsewhere."
+      initial_ask_ratio: 0.97
+      neutral_accept_ratio: 0.58
+      post_drift_ask_ratio: 0.61
+      final_ask_ratio: 0.60
+    initial_intent: neutral
+    drift_mode: frustrated_walkaway
+    drift_trigger:
+      frustration_threshold: 3
+      walkaway_after_turns: 2
+      low_offer_multiplier: 0.88
+    turn_limit: 9
+    expected_weight_shift:
+      sl_ratio: down
+      fairness: up
+      deal_rate: up
+    case:
+      item_name: "game console"
+      buyer_price: 140
+      seller_price: 300
+      seller_item_description: "A used game console with two controllers and several games."
+      buyer_item_description: "A buyer with a cheaper but less complete backup listing."
+
+  - id: scarcity_competing_buyer_lens_001
+    macro_goal: "Resist scarcity pressure above budget, but if the final offer is within budget, stop haggling and secure the item."
+    buyer_intent_id: SCARCITY_ADAPTIVE_BUYER
+    static_w: [0.36, 0.24, 0.30, 0.10]
+    buyer_constraints:
+      max_acceptable_price_ratio: 0.65
+      target_price_ratio: 0.45
+      turn_limit: 8
+    seller_persona:
+      type: scarcity_pressure_seller
+      description: "A seller who claims another buyer can pick up soon and uses final-offer pressure."
+      initial_ask_ratio: 0.98
+      neutral_accept_ratio: 0.61
+      post_drift_ask_ratio: 0.69
+      final_ask_ratio: 0.64
+    initial_intent: neutral
+    drift_mode: abrupt_final_offer
+    drift_trigger:
+      turn_id: 3
+    turn_limit: 8
+    expected_weight_shift:
+      sl_ratio: down
+      deal_rate: up
+      avg_turn: up
+    case:
+      item_name: "wide-angle lens"
+      buyer_price: 180
+      seller_price: 420
+      seller_item_description: "A wide-angle lens that is popular locally and has a competing pickup request."
+      buyer_item_description: "A buyer who wants the lens but must stay under budget."
+
+  - id: budget_locked_over_ceiling_phone_001
+    macro_goal: "The budget is locked. Prefer no deal over overpaying, but close calmly if the seller enters budget."
+    buyer_intent_id: BUDGET_LOCKED_FLEXIBLE_TIMING
+    static_w: [0.66, 0.16, 0.10, 0.08]
+    buyer_constraints:
+      max_acceptable_price_ratio: 0.54
+      target_price_ratio: 0.36
+      turn_limit: 8
+    seller_persona:
+      type: over_ceiling_firm_seller
+      description: "A seller whose floor is above the buyer ceiling and who becomes firm rather than conceding enough."
+      initial_ask_ratio: 0.98
+      neutral_accept_ratio: 0.64
+      post_drift_ask_ratio: 0.66
+      final_ask_ratio: 0.62
+    initial_intent: neutral
+    drift_mode: abrupt_final_offer
+    drift_trigger:
+      turn_id: 3
+    turn_limit: 8
+    expected_weight_shift:
+      sl_ratio: up
+      deal_rate: down
+    case:
+      item_name: "used phone"
+      buyer_price: 220
+      seller_price: 520
+      seller_item_description: "A used phone in very good condition with box and receipt."
+      buyer_item_description: "A buyer who can wait for another listing and has a hard budget cap."
+
+  - id: long_haggle_fatigue_chair_001
+    macro_goal: "Haggle for savings early, but if the negotiation drags on, finish efficiently without exceeding the ceiling."
+    buyer_intent_id: LONG_HAGGLE_FATIGUE_CONTROL
+    static_w: [0.60, 0.14, 0.18, 0.08]
+    buyer_constraints:
+      max_acceptable_price_ratio: 0.63
+      target_price_ratio: 0.35
+      turn_limit: 10
+    seller_persona:
+      type: slow_concession_seller
+      description: "A seller who gives slow concessions and becomes firmer when the conversation takes too long."
+      initial_ask_ratio: 0.96
+      neutral_accept_ratio: 0.58
+      post_drift_ask_ratio: 0.62
+      final_ask_ratio: 0.60
+    initial_intent: neutral
+    drift_mode: gradual_firming
+    drift_trigger:
+      round_without_deal: 4
+      low_offer_streak: 3
+      low_offer_multiplier: 0.86
+    turn_limit: 10
+    expected_weight_shift:
+      sl_ratio: down
+      deal_rate: up
+      avg_turn: up
+    case:
+      item_name: "ergonomic chair"
+      buyer_price: 80
+      seller_price: 190
+      seller_item_description: "An ergonomic chair with adjustable arms and minor fabric wear."
+      buyer_item_description: "A buyer who wants savings but dislikes long negotiations."
+
+  - id: fair_relationship_impatient_seller_001
+    macro_goal: "Preserve a fair relationship with an impatient seller while still staying below the buyer ceiling."
+    buyer_intent_id: FAIR_RELATIONSHIP_REPEAT_BUYER
+    static_w: [0.24, 0.46, 0.22, 0.08]
+    buyer_constraints:
+      max_acceptable_price_ratio: 0.64
+      target_price_ratio: 0.46
+      turn_limit: 8
+    seller_persona:
+      type: impatient_repeat_seller
+      description: "A seller who initially appreciates fairness but becomes irritated by repeated delay."
+      initial_ask_ratio: 0.94
+      neutral_accept_ratio: 0.59
+      post_drift_ask_ratio: 0.63
+      final_ask_ratio: 0.61
+    initial_intent: neutral
+    drift_mode: frustrated_walkaway
+    drift_trigger:
+      frustration_threshold: 3
+      walkaway_after_turns: 2
+      low_offer_multiplier: 0.90
+    turn_limit: 8
+    expected_weight_shift:
+      fairness: down
+      deal_rate: up
+      avg_turn: up
+    case:
+      item_name: "desk monitor"
+      buyer_price: 100
+      seller_price: 240
+      seller_item_description: "A desk monitor with a clean panel and original stand."
+      buyer_item_description: "A buyer who may contact the same seller for office equipment later."
+
+  - id: backup_option_final_offer_guitar_001
+    macro_goal: "Use a backup listing for leverage, but if this seller gives a final viable offer, close before the item disappears."
+    buyer_intent_id: BACKUP_OPTION_PRESSURE_CONTROL
+    static_w: [0.64, 0.12, 0.16, 0.08]
+    buyer_constraints:
+      max_acceptable_price_ratio: 0.60
+      target_price_ratio: 0.35
+      turn_limit: 8
+    seller_persona:
+      type: final_offer_backup_seller
+      description: "A seller who knows the item is desirable and switches to final-offer language after pushback."
+      initial_ask_ratio: 0.96
+      neutral_accept_ratio: 0.57
+      post_drift_ask_ratio: 0.64
+      final_ask_ratio: 0.59
+    initial_intent: neutral
+    drift_mode: abrupt_final_offer
+    drift_trigger:
+      turn_id: 4
+    turn_limit: 8
+    expected_weight_shift:
+      sl_ratio: down
+      deal_rate: up
+      avg_turn: up
+    case:
+      item_name: "acoustic guitar"
+      buyer_price: 110
+      seller_price: 260
+      seller_item_description: "An acoustic guitar with a hard case and fresh strings."
+      buyer_item_description: "A buyer with another listing available but lower confidence in its condition."

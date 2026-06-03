@@ -237,3 +237,91 @@ Per run, the checkpoint directory
 | `regret_log.csv` | per epoch: candidate `w`, regret, admitted flag |
 | `phase1_eval/<anchor>.json` | Phase 1 per-anchor evaluation dialogues |
 | `skill_discovery.txt` | Anchor library audit trail |
+
+---
+
+## 7. H-MOD: Dynamic Objective Navigation on Top of the Low Policy
+
+The trained R-PADPP model (`dmorl_phase2.pth`) is a **low policy**: it maps a
+preference weight `w` to a dialogue action. PADPP/R-PADPP uses a *fixed* `w` per
+episode. H-MOD adds a **high-level controller** that makes `w` **dynamic**: the
+seller's intent drifts mid-dialogue, and to keep winning the buyer's objective
+weight must adapt turn by turn.
+
+### Pipeline
+
+```
+[ R-PADPP Phase 1 + Phase 2 ]  ->  dmorl_phase2.pth  (LOW POLICY: w -> action)
+                                          |
+LLM/controller --w_local-->  low policy runs w_local for T turns
+        ^                                 |
+        |---- update w_local (LLM) <------+   (seller intent drifts each turn)
+                                          v
+                          GSR / T2DA / CVR metrics  +  experience self-reflection
+```
+
+- **Low policy**: the existing R-PADPP checkpoint, unchanged. Trained on the
+  3-D objective space `[sl_ratio, fairness, deal_rate]`.
+- **Controller** (`hmod/policy.py`): every `reflection_horizon` (T) turns it
+  emits a fresh 3-D `w_local`. Two modes:
+  - `rule_scaffold`: deterministic rules adapt `w` to the detected seller intent.
+  - `llm_reflection`: an LLM reads `macro_goal` + visible dialogue → `w_t`.
+- **Environment** (`hmod/simulator.py`): a seller simulator with deterministic
+  intent **drift** (`static_no_drift`, `gradual_firming`, `abrupt_final_offer`,
+  `frustrated_walkaway`).
+- **Neural low-policy bridge** (`hmod/low_policy.py`): wraps the DMORL trainer
+  so the controller's `w_t` drives the trained model (`w -> (strategy, bin) ->
+  utterance`) instead of the rule-scaffold buyer.
+- **Experience accumulation** (`hmod/experience.py`): after each episode the
+  outcome (final `w`, GSR, deal price vs ceiling) is stored; before each
+  reflection a summary of past successes/failures for the same goal is injected
+  into the LLM prompt, so `w_local` generation improves over time.
+
+### Metrics (`hmod/metrics.py`)
+
+| Metric | Meaning |
+|---|---|
+| **GSR** | Goal Success Rate: deal closed AND price ≤ buyer ceiling AND turns ≤ limit |
+| **T2DA** | Turn-to-Drift-Adaptation: turns after drift until `‖w_t − w_pre‖₁ ≥ 0.25` |
+| **CVR** | Constraint Violation Rate: fraction of actions over the price ceiling (blocked vs actual) |
+
+### Note on dimensionality
+
+H-MOD was authored with a 4-D objective space (`…, avg_turn`). Because the low
+policy here is 3-D, the merge collapses every weight to 3-D on the fly
+(`hmod.scenario.coerce_objective_weight`): legacy 4-D `static_w` and any 4-D LLM
+reply drop the `avg_turn` term and renormalise. The former avg_turn "urgency"
+adjustments are folded into `deal_rate`.
+
+### Commands
+
+Evaluate the dynamic controller driving the **neural low policy**:
+
+```bash
+python eval_hmod.py \
+  --scenario_file config/scenario/generated/hmod_bargain_test_scenarios.yaml \
+  --mode hmod_dynamic \
+  --controller_mode llm_reflection \
+  --reflection_horizon 3 \
+  --low_policy_checkpoint checkpoints/negotiation/craigslist_bargain/DMORLModel_42/dmorl_phase2.pth \
+  --low_policy_gen_models fpt --low_policy_model_type fpt \
+  --use_experience_buffer \
+  --llm_fallback_to_rule \
+  --judge_model rule \
+  --output_dir outputs/hmod_eval
+```
+
+Baselines on the same scenarios (for the paper table):
+
+```bash
+# Static PADPP w baseline
+python eval_hmod.py --mode padpp_static  --low_policy_checkpoint <ckpt> ...
+# Dynamic without the safety mask (reward-hacking ablation)
+python eval_hmod.py --mode hmod_no_mask  --controller_mode llm_reflection --low_policy_checkpoint <ckpt> ...
+```
+
+Without `--low_policy_checkpoint`, `eval_hmod.py` falls back to the lightweight
+rule-scaffold buyer (useful for fast smoke tests of the controller/metrics).
+
+See `README_HMOD.md` for the full H-MOD benchmark generator, recommendation
+split, LLM-as-judge and human-audit details.
