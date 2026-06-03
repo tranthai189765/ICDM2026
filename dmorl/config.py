@@ -45,6 +45,12 @@ class DMORLConfig(PADPPConfig):
     # collapsing to the dominant counter/inquire/greet classes.
     sft_class_balanced = False
 
+    # Deal-weighted agree exploration: during epsilon exploration, steer the
+    # random action to ('agree', 0) with probability = the deal-rate weight
+    # (w=[0,0,1] -> 100%, uniform -> 33%, gain/fair -> 0%). Encourages
+    # deal-caring skills to actually try agree, which is otherwise rare.
+    agree_explore_bias = False
+
     # Best-checkpoint selection in Phase 1: every eval_every_epochs epochs,
     # estimate greedy SR over quick_eval_episodes dialogues per anchor and save
     # dmorl_phase1_best.pth when it improves. 0 disables (only the last epoch is

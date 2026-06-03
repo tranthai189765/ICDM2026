@@ -1062,18 +1062,40 @@ class PADPPTrainer(Trainer):
                         action_mapping, logits.size(-1), logits.device)
                     logits = logits.masked_fill(~action_mask, float('-inf'))
 
-                action, log_prob = self.select_action(logits, is_test=is_test)
+                # Deal-weighted agree exploration (CLI: --agree_explore_bias).
+                # During epsilon exploration, steer the random action toward
+                # ('agree', 0) with probability = the deal-rate weight w_deal, so
+                # deal-caring skills (w=[0,0,1] -> 100%) try agree far more than
+                # uniform random, while gain/fair skills (w_deal=0) never do.
+                agree_action_id, agree_prob = None, 0.0
+                if (not is_test
+                        and getattr(self.model_config, 'agree_explore_bias', False)):
+                    _amap = action_mapping[0] if isinstance(action_mapping, tuple) else action_mapping
+                    agree_action_id = _amap.get(('agree', 0))
+                    try:
+                        wv = w.detach().cpu().numpy().reshape(-1)
+                        agree_prob = float(wv[-1])  # deal_rate is the last objective
+                    except Exception:
+                        agree_prob = 0.0
+
+                action, log_prob = self.select_action(
+                    logits, is_test=is_test,
+                    agree_action_id=agree_action_id, agree_prob=agree_prob)
                 action = inverse_action_mapping[action]
                 loguru_logger.debug(f"action={action} log_prob={log_prob}")
 
         # return action and log prob
         return action, log_prob, reward
 
-    def select_action(self, logits, is_test=True, eps=0.1):
+    def select_action(self, logits, is_test=True, eps=0.1,
+                       agree_action_id=None, agree_prob=0.0):
         """
         method that select an action from the output logits
         :param logits: the logits output by a model
         :param is_test: True if it is inference time else false
+        :param agree_action_id: flat id of ('agree', 0), or None
+        :param agree_prob: probability of steering a RANDOM exploration step to
+            agree (= the deal-rate weight). Only used in the epsilon branch.
         """
         # convert logits to probabilities
         probs = nn.functional.softmax(logits, dim=1)
@@ -1098,7 +1120,15 @@ class PADPPTrainer(Trainer):
                 # exploration pick masked duplicates (e.g. greet at bin>0),
                 # polluting the buffer. Restrict the random draw to finite logits.
                 valid = torch.isfinite(logits.view(-1)).nonzero(as_tuple=True)[0]
-                if valid.numel() > 0:
+                # Deal-weighted agree bias: with prob = agree_prob (the deal
+                # weight) steer this random step to ('agree', 0) when it is a
+                # valid action, so deal-caring skills try agree much more often.
+                if (agree_action_id is not None and agree_prob > 0.0
+                        and np.random.random() < agree_prob
+                        and 0 <= agree_action_id < logits.size(-1)
+                        and torch.isfinite(logits.view(-1)[agree_action_id])):
+                    action = int(agree_action_id)
+                elif valid.numel() > 0:
                     action = valid[np.random.randint(0, valid.numel())].item()
                 else:
                     action = logits.argmax().item()
