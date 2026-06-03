@@ -164,6 +164,10 @@ def parse_dmorl_args():
                                help='Floor epsilon after decay (default 0.05)')
     dmorl_parser.add_argument('--eps_decay_epochs', type=int, default=None,
                                help='Epochs to linearly decay eps_start→eps_end before the floor (default 15)')
+    dmorl_parser.add_argument('--eval_every_epochs', type=int, default=None,
+                               help='Phase 1: eval greedy SR every K epochs and keep dmorl_phase1_best.pth (0=off)')
+    dmorl_parser.add_argument('--quick_eval_episodes', type=int, default=None,
+                               help='Dialogues per anchor for the periodic best-checkpoint SR eval (default 2)')
     dmorl_parser.add_argument('--debug', action='store_true', default=False,
                                help='Print LLM prompts/outputs, per-step rewards/losses, save eval dialogues')
     dmorl_parser.add_argument('--debug_output_dir', type=str, default=None,

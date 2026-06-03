@@ -40,6 +40,14 @@ class DMORLConfig(PADPPConfig):
     # identical to bin 0). Shrinks the 55-action grid to 19 distinct actions.
     mask_redundant_actions = True
 
+    # Best-checkpoint selection in Phase 1: every eval_every_epochs epochs,
+    # estimate greedy SR over quick_eval_episodes dialogues per anchor and save
+    # dmorl_phase1_best.pth when it improves. 0 disables (only the last epoch is
+    # saved). The last-epoch greedy policy can collapse (e.g. counter-only,
+    # never agreeing), so a mid-training epoch is often better.
+    eval_every_epochs = 0
+    quick_eval_episodes = 2
+
     # ── Exploration schedule (epsilon-greedy: linear decay then floor) ───────
     # epsilon decays linearly from eps_start to eps_end across the first
     # eps_decay_epochs epochs, then stays at eps_end for the rest.

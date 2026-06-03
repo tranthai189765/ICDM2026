@@ -272,11 +272,21 @@ class DMORLTrainer(PADPPTrainer):
         # train_rl_step picks this up via self._phase1_basic_weights_np.
         self._phase1_basic_weights_np = basic_weights.astype(np.float32)
 
+        # Best-checkpoint: periodically eval greedy SR and keep the best epoch
+        # (dmorl_phase1_best.pth), since the last epoch can collapse.
+        saved_dir = getattr(self.model_config, "saved_dir", "checkpoints")
+        os.makedirs(saved_dir, exist_ok=True)
+        best_ckpt_path = os.path.join(saved_dir, "dmorl_phase1_best.pth")
+        eval_every = getattr(self.model_config, "eval_every_epochs", 0)
+        eval_n = getattr(self.model_config, "quick_eval_episodes", 2)
+
         try:
             self._run_curriculum_rlt(
                 cases, device, simulators, action_mapping,
                 skill_weights=basic_weights, skill_names=skill_names, p_skill=1.0,
                 phase="phase1", skill_name="anchor",
+                best_eval_weights=basic_weights, best_ckpt_path=best_ckpt_path,
+                eval_every=eval_every, eval_n=eval_n,
             )
         finally:
             self.model_config.num_train_rl_epochs = original_epochs
@@ -734,12 +744,48 @@ class DMORLTrainer(PADPPTrainer):
         return eps_start + (eps_end - eps_start) * (epoch / decay)
 
     # ═════════════════════════════════════════════════════════════════════════
+    # Quick greedy SR eval (for best-checkpoint selection during Phase 1)
+    # ═════════════════════════════════════════════════════════════════════════
+
+    def _quick_sr_eval(self, cases, simulators, action_mapping, weights,
+                        n_each, max_horizon):
+        """Greedy (is_test=True) success-rate estimate over a few dialogues per
+        weight. Used to pick the best epoch instead of blindly taking the last."""
+        self.model.eval()
+        successes, total = 0, 0
+        with torch.no_grad():
+            for w in weights:
+                wv = np.array(w)
+                w_t = torch.FloatTensor(wv).to(self.device)
+                for _ in range(n_each):
+                    case = np.random.choice(cases)
+                    sim = np.random.choice(simulators)
+                    state = self.game.reset(case, sim)
+                    state['w'] = wv
+                    done = 0
+                    for t in count():
+                        action, _, _ = self.predict(
+                            state, w_t, action_mapping, is_test=True,
+                            is_computing_reward=False, use_gpi=False,
+                        )
+                        state, reward, done, _ = self.game.step(
+                            state, action, self.generation_method, sim)
+                        if done or t >= max_horizon - 1:
+                            break
+                    successes += int(done == 1)
+                    total += 1
+        self.model.train()
+        return successes / max(total, 1)
+
+    # ═════════════════════════════════════════════════════════════════════════
     # Internal: Curriculum RLT (Phase 1)
     # ═════════════════════════════════════════════════════════════════════════
 
     def _run_curriculum_rlt(self, cases, device, simulators, action_mapping,
                              fixed_weight=None, skill_weights=None, skill_names=None,
-                             p_skill=1.0, phase="phase1", skill_name=""):
+                             p_skill=1.0, phase="phase1", skill_name="",
+                             best_eval_weights=None, best_ckpt_path=None,
+                             eval_every=0, eval_n=2):
         """
         Phase 1 inner loop. Uses PADPP-original train_rl_step (random Dirichlet
         preferences in the inner update). No GPI hooks, no envelopes — vanilla.
@@ -762,6 +808,13 @@ class DMORLTrainer(PADPPTrainer):
         # _epsilon_for_epoch). Strong early exploration helps the policy escape
         # degenerate local optima (e.g. deny/agree spam) before exploiting.
         total_eps_epochs = self.model_config.num_train_rl_epochs
+
+        # Best-checkpoint selection: the greedy policy at the LAST epoch can be
+        # worse than a mid-training epoch (it may collapse to e.g. counter-only,
+        # never agreeing). When eval_every>0 we periodically estimate greedy SR
+        # and keep the best checkpoint separately.
+        best_sr = -1.0
+        max_horizon = getattr(self.game_config, "max_horizon", 10)
 
         episode_counter = 0
         for train_step in range(self.model_config.num_train_rl_epochs):
@@ -826,6 +879,25 @@ class DMORLTrainer(PADPPTrainer):
                 )
                 self.train_rl_step(buffer, action_mapping, optimizer, scheduler)
 
+            # Periodic greedy-SR eval → keep the best checkpoint.
+            if (eval_every and best_eval_weights is not None and best_ckpt_path
+                    and (train_step + 1) % eval_every == 0):
+                sr = self._quick_sr_eval(
+                    cases, simulators, action_mapping,
+                    best_eval_weights, eval_n, max_horizon)
+                loguru_logger.info(
+                    f"[Curriculum] Epoch {train_step}: greedy SR={sr:.3f} "
+                    f"(best so far={max(best_sr, 0):.3f})"
+                )
+                if sr > best_sr:
+                    best_sr = sr
+                    self.save_model(best_ckpt_path)
+                    loguru_logger.info(
+                        f"[Curriculum] New best (SR={sr:.3f}) → saved {best_ckpt_path}"
+                    )
+
         # clear the exploration schedule so eval / later phases start fresh
         self.current_eps = None
+        if best_sr >= 0:
+            loguru_logger.info(f"[Curriculum] Best greedy SR over training = {best_sr:.3f}")
         loguru_logger.info("[Curriculum] Phase 1 complete.")
