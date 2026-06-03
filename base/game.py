@@ -389,6 +389,14 @@ class NegotiationGame(Game):
             "_buyer_declared_price": None,
             "_seller_declared_price": None,
         }
+
+        # Log the two opening boilerplate turns (buyer greeting + seller listing)
+        # so the conversation log shows the FULL dialogue, not just from the
+        # first negotiated turn onward.
+        logger.info("===== New dialogue =====")
+        logger.info(f"[System]: {dialogue_context[0]['content']}")
+        logger.info(f"[USER]: {dialogue_context[1]['content']}")
+
         return state
 
     def step(self, state, action, generation_model, simulator):
