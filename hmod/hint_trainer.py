@@ -99,7 +99,7 @@ class HMODHintTrainer:
         )
         for epoch in range(1, epochs + 1):
             evaluator = self._make_evaluator()
-            result = evaluator.run(self.scenarios)
+            result = evaluator.run(self.scenarios, progress_prefix=f"epoch {epoch}/{epochs}")
             metrics = result["metrics"]
             logger.info(f"[epoch {epoch}/{epochs}] self-play metrics: {_fmt_metrics(metrics)}")
 

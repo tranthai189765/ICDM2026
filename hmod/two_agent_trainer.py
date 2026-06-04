@@ -109,7 +109,7 @@ class TwoAgentHintTrainer:
                 verbose=self.verbose,
                 turn_limit_mult=self.turn_limit_mult,
             )
-            result = evaluator.run(self.scenarios)
+            result = evaluator.run(self.scenarios, progress_prefix=f"epoch {epoch}/{epochs}")
             metrics = result["metrics"]
 
             det_digest = build_detector_digest(controller.detector_records)

@@ -382,8 +382,20 @@ class HMODEvaluator:
             "violation_trace": violation_trace,
         }
 
-    def run(self, scenarios: List[HMODScenario]) -> Dict[str, Any]:
-        dialogues = [self.run_dialogue(scenario) for scenario in scenarios]
+    def run(self, scenarios: List[HMODScenario],
+            progress_prefix: Optional[str] = None) -> Dict[str, Any]:
+        dialogues = []
+        n = len(scenarios)
+        for i, scenario in enumerate(scenarios):
+            rec = self.run_dialogue(scenario)
+            dialogues.append(rec)
+            if progress_prefix is not None:
+                logger.info(
+                    f"[{progress_prefix}] {i + 1}/{n} {rec['scenario_id']}: "
+                    f"deal={rec['judge_result'].get('deal')} GSR={rec['gsr']} "
+                    f"t2da={(rec.get('t2da') or {}).get('t2da')} "
+                    f"turns={rec['gsr_components']['turn_count']}"
+                )
         return {
             "mode": self.mode,
             "controller_mode": self.controller_mode,
