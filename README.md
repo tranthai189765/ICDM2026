@@ -235,6 +235,8 @@ Per run, the checkpoint directory
 | `dmorl_phase1_best.pth` | Phase 1 — epoch with best greedy **SR** (only if `--eval_every_epochs > 0`) |
 | `dmorl_phase1_best_wsum.pth` | Phase 1 — epoch with best mean **weighted-sum return** per episode (only if `--eval_every_epochs > 0`) |
 | `dmorl_phase2.pth` | Phase 2 R-PADPP weights — last epoch |
+| `dmorl_phase2_best.pth` | Phase 2 — epoch with best greedy **SR** (only if `--eval_every_epochs > 0`) |
+| `dmorl_phase2_best_wsum.pth` | Phase 2 — epoch with best mean **weighted-sum return** (only if `--eval_every_epochs > 0`) |
 | `training_losses.csv` | per-update: `global_step, phase, loss, L_self, L_know` |
 | `training_rewards.csv` | per-step: `epoch, episode, phase, skill, action, reward vec, weight, weighted_sum` |
 | `regret_log.csv` | per epoch: candidate `w`, regret, admitted flag |

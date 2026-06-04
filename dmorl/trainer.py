@@ -414,6 +414,19 @@ class DMORLTrainer(PADPPTrainer):
             f"alpha={alpha_r}, active_sampling={use_active}"
         )
 
+        # Best-checkpoint selection (greedy SR + weighted-sum return), evaluated
+        # on the 7 anchor preferences every eval_every_epochs — mirrors Phase 1.
+        saved_dir = getattr(self.model_config, "saved_dir", "checkpoints")
+        os.makedirs(saved_dir, exist_ok=True)
+        best_sr_path = os.path.join(saved_dir, "dmorl_phase2_best.pth")
+        best_wsum_path = os.path.join(saved_dir, "dmorl_phase2_best_wsum.pth")
+        eval_every = getattr(self.model_config, "eval_every_epochs", 0)
+        eval_n = getattr(self.model_config, "quick_eval_episodes", 2)
+        anchor_weights = np.array([s["weight_vector"] for s in basic_skills])
+        max_horizon = getattr(self.game_config, "max_horizon", 10)
+        best_sr = -1.0
+        best_wsum = -math.inf
+
         episode_counter = 0
         for epoch in range(n_epochs):
             self.model.train()
@@ -495,8 +508,32 @@ class DMORLTrainer(PADPPTrainer):
                 self.q_old_network.load_state_dict(self.model.state_dict())
                 loguru_logger.info(f"[Phase-2] Epoch {epoch}: Q_old snapshot updated.")
 
+            # 7. Periodic greedy eval → keep best-SR and best-wsum checkpoints.
+            if eval_every and (epoch + 1) % eval_every == 0:
+                sr, wsum = self._quick_sr_eval(
+                    cases, simulators, action_mapping,
+                    anchor_weights, eval_n, max_horizon)
+                loguru_logger.info(
+                    f"[Phase-2] Epoch {epoch}: greedy SR={sr:.3f} wsum_return={wsum:.3f} "
+                    f"(best SR={max(best_sr, 0):.3f}, "
+                    f"best wsum={best_wsum if best_wsum > -math.inf else 0:.3f})"
+                )
+                if sr > best_sr:
+                    best_sr = sr
+                    self.save_model(best_sr_path)
+                    loguru_logger.info(f"[Phase-2] New best SR={sr:.3f} → saved {best_sr_path}")
+                if wsum > best_wsum:
+                    best_wsum = wsum
+                    self.save_model(best_wsum_path)
+                    loguru_logger.info(f"[Phase-2] New best wsum={wsum:.3f} → saved {best_wsum_path}")
+
         # clear the exploration schedule so eval starts greedy
         self.current_eps = None
+        if best_sr >= 0:
+            loguru_logger.info(
+                f"[Phase-2] Best greedy SR={best_sr:.3f}, "
+                f"best wsum_return={best_wsum if best_wsum > -math.inf else 0:.3f}"
+            )
 
         # Save Phase 2 checkpoint
         saved_dir = getattr(self.model_config, "saved_dir", "checkpoints")
