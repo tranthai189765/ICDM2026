@@ -162,9 +162,10 @@ def parse_args():
     parser.add_argument(
         "--turn_limit_mult",
         type=float,
-        default=1.0,
-        help="Multiply each scenario's turn limit (e.g. 3.0 = triple the dialogue "
-        "length). Metrics (GSR/T2DA) use the scaled limit too.",
+        default=1.5,
+        help="Multiply each scenario's turn limit. Default 1.5 gives the intent "
+        "drift room to fire and the controller room to adapt (set 1.0 for the raw "
+        "scenario limit, 3.0 to triple). Metrics (GSR/T2DA) use the scaled limit too.",
     )
     return parser.parse_args()
 

@@ -45,7 +45,9 @@ def parse_args():
     p.add_argument("--epochs", type=int, default=6)
     p.add_argument("--judge_model", default="fpt",
                    help="Deal judge for self-play feedback. Default 'fpt' (LLM); use 'rule' to save tokens.")
-    p.add_argument("--turn_limit_mult", type=float, default=1.0)
+    p.add_argument("--turn_limit_mult", type=float, default=1.5,
+                   help="Scale each scenario turn limit. Default 1.5 ensures the intent "
+                        "drift fires and leaves room to adapt (1.0 = raw scenario limit).")
     p.add_argument("--use_llm_simulator", action="store_true")
     p.add_argument("--verbose", action="store_true")
     p.add_argument("--no_fallback_to_rule", action="store_true")

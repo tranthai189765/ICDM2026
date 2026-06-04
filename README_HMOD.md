@@ -489,6 +489,16 @@ python eval_hmod.py --two_agent \
   --verbose
 ```
 
+**Drift coverage / turn budget.** `--turn_limit_mult` defaults to **1.5** in this
+phase so the condition-based drifts (`gradual_firming`, `frustrated_walkaway`)
+have time to fire and the controller has room to adapt after drift. An offline
+audit over 400 train scenarios (rule buyer, deterministic seller) shows non-static
+episodes drift ~94% of the time with several post-drift turns; with the neural low
+policy `abrupt_final_offer` fires at its configured `turn_id`. Note that
+`static_no_drift` (25% of the data) never drifts **by design** — it is the
+no-drift control. To run only drifting episodes, filter the scenario file to
+`drift_mode != static_no_drift`.
+
 #### 4.5.1 Agent 1 — Intent-Drift Detector prompt
 
 System:

@@ -47,7 +47,9 @@ def parse_args():
     p.add_argument("--reflection_horizon", type=int, default=4,
                    help="Macro-step length: hold w_local fixed for T low-policy "
                         "actions, then re-select w_local (default 4).")
-    p.add_argument("--turn_limit_mult", type=float, default=1.0)
+    p.add_argument("--turn_limit_mult", type=float, default=1.5,
+                   help="Scale each scenario turn limit. Default 1.5 ensures the intent "
+                        "drift fires and leaves room to adapt (1.0 = raw scenario limit).")
     p.add_argument("--use_llm_simulator", action="store_true")
     p.add_argument("--verbose", action="store_true",
                    help="Print each self-play dialogue turn-by-turn.")
