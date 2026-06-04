@@ -116,6 +116,20 @@ def parse_args():
         default="outputs/hmod_experience.json",
         help="Where the cross-episode experience buffer is persisted.",
     )
+    # ── Sample-dialogue logging + dialogue length ──────────────────────────
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print each sample dialogue turn-by-turn: seller intent_state, the "
+        "LLM-chosen w_t, and both buyer/seller utterances.",
+    )
+    parser.add_argument(
+        "--turn_limit_mult",
+        type=float,
+        default=1.0,
+        help="Multiply each scenario's turn limit (e.g. 3.0 = triple the dialogue "
+        "length). Metrics (GSR/T2DA) use the scaled limit too.",
+    )
     return parser.parse_args()
 
 
@@ -165,6 +179,8 @@ def main():
         llm_fallback_to_rule=args.llm_fallback_to_rule,
         buyer_policy=buyer_policy,
         experience_buffer=experience_buffer,
+        verbose=args.verbose,
+        turn_limit_mult=args.turn_limit_mult,
     )
     print(json.dumps(result, indent=2, ensure_ascii=False))
 

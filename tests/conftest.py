@@ -13,6 +13,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+# Our top-level packages `utils`/`base` are namespace packages (no __init__.py),
+# so a foreign *editable* install on the global interpreter that ships a regular
+# `utils`/`base` package would shadow ours (regular package wins over namespace).
+# Drop such unrelated editable entries so tests always import THIS project's code.
+# No-op in a clean environment.
+sys.path[:] = [p for p in sys.path if "legal_btc_graph" not in p.lower()]
+
 # ── Stub heavy/absent packages before any project imports ────────────────────
 # These are installed on the training server but not in the local test env.
 # We use types.ModuleType (not MagicMock) so that importlib.util.find_spec

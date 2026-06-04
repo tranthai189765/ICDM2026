@@ -5,6 +5,8 @@ import os
 import time
 from typing import Any, Dict, List, Optional
 
+from loguru import logger
+
 from hmod.judge import judge_deal
 from hmod.llm_reflection import LLMWeightReflector
 from hmod.metrics import aggregate_dialogue_metrics, compute_cvr, compute_gsr, compute_t2da, subgroup_metrics
@@ -108,6 +110,8 @@ class HMODEvaluator:
         llm_fallback_to_rule: bool = False,
         buyer_policy: Optional[Any] = None,
         experience_buffer: Optional[Any] = None,
+        verbose: bool = False,
+        turn_limit_mult: float = 1.0,
     ):
         if mode not in {"padpp_static", "hmod_dynamic", "hmod_no_mask"}:
             raise ValueError("mode must be one of padpp_static, hmod_dynamic, hmod_no_mask")
@@ -118,6 +122,8 @@ class HMODEvaluator:
         self.mode = mode
         self.controller_mode = controller_mode
         self.judge_model = judge_model
+        self.verbose = verbose
+        self.turn_limit_mult = max(0.1, float(turn_limit_mult))
         self.use_llm_simulator = use_llm_simulator
         self.audit_sample_size = audit_sample_size
         self.objective_file = objective_file
@@ -172,7 +178,21 @@ class HMODEvaluator:
         violation_trace: List[Dict[str, Any]] = []
         current_weight: Optional[List[float]] = None
 
-        for turn in range(scenario.turn_limit):
+        # Effective turn limit (e.g. --turn_limit_mult 3 triples the dialogue
+        # length). Used for the loop AND the metrics so they stay consistent.
+        effective_turn_limit = max(1, int(round(scenario.turn_limit * self.turn_limit_mult)))
+
+        if self.verbose:
+            logger.info(
+                f"===== Dialogue {scenario.id} | drift={scenario.drift_mode} | "
+                f"macro_goal='{scenario.macro_goal}' | turn_limit={effective_turn_limit} ====="
+            )
+            logger.info(
+                f"  [item] {scenario.case.get('item_name')} | buyer_target≈${scenario.target_price():.0f} "
+                f"| buyer_ceiling≈${scenario.max_acceptable_price():.0f} | seller_list=${scenario.case.get('seller_price')}"
+            )
+
+        for turn in range(effective_turn_limit):
             state["turn_id"] = turn
             selected = self.meta_controller.select_local_weight(
                 scenario=scenario,
@@ -235,6 +255,21 @@ class HMODEvaluator:
             seller_response = simulator.respond(state)
             state["dialogue_context"].append({"role": "user", "content": seller_response})
             state["last_seller_price"] = first_price(seller_response)
+
+            if self.verbose:
+                wt = [round(float(x), 2) for x in current_weight]
+                reflected = "REFLECT" if selected.get("reflection_step") else "carry"
+                sim_intent = simulator.get_trace().get("intent_state_by_turn", [])
+                cur_intent = (sim_intent[-1].get("intent_state")
+                              if sim_intent else selected.get("intent_state"))
+                logger.info(
+                    f"[turn {turn}] seller_intent={cur_intent} | w_t={wt} ({reflected}) | "
+                    f"act={decision['action'].get('strategy')}"
+                    + ("  [MASKED: over-ceiling]" if decision.get("blocked_violation") else "")
+                )
+                logger.info(f"   [Buyer]:  {decision['buyer_response']}")
+                logger.info(f"   [Seller]: {seller_response}")
+
             if _is_terminal(state["dialogue_context"]):
                 break
 
@@ -245,7 +280,7 @@ class HMODEvaluator:
             judge_result=judge_result,
             min_acceptable_price=max_price,
             turn_count=turn_count,
-            turn_limit=scenario.turn_limit,
+            turn_limit=effective_turn_limit,
             price_direction="at_most",
         )
         if judge_result.get("deal_price") is not None and float(judge_result["deal_price"]) > max_price:
@@ -267,10 +302,17 @@ class HMODEvaluator:
         t2da = compute_t2da(
             weight_trace=weight_trace,
             t_drift=sim_trace.get("t_drift"),
-            turn_limit=scenario.turn_limit,
+            turn_limit=effective_turn_limit,
             expected_weight_shift=scenario.expected_weight_shift,
         )
         cvr = compute_cvr(violation_trace)
+
+        if self.verbose:
+            logger.info(
+                f"===== Result {scenario.id}: deal={judge_result.get('deal')} "
+                f"deal_price={judge_result.get('deal_price')} | GSR={gsr} "
+                f"T2DA={t2da} CVR={cvr} | turns={turn_count} =====\n"
+            )
 
         # Record this episode for cross-episode experience accumulation.
         if self.experience_buffer is not None:
@@ -352,6 +394,8 @@ def run_and_write(
     llm_fallback_to_rule: bool = False,
     buyer_policy: Optional[Any] = None,
     experience_buffer: Optional[Any] = None,
+    verbose: bool = False,
+    turn_limit_mult: float = 1.0,
 ) -> Dict[str, Any]:
     scenarios = load_scenarios(scenario_file, limit=num_cases)
     run_id = f"{mode}_{time.strftime('%Y%m%d_%H%M%S')}"
@@ -376,6 +420,8 @@ def run_and_write(
         llm_fallback_to_rule=llm_fallback_to_rule,
         buyer_policy=buyer_policy,
         experience_buffer=experience_buffer,
+        verbose=verbose,
+        turn_limit_mult=turn_limit_mult,
     )
     result = evaluator.run(scenarios)
 
