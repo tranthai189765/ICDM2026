@@ -135,6 +135,22 @@ def parse_args():
         help="Load a distilled general-hint playbook (from train_hmod.py) and "
         "inject it into the LLM reflection prompt during inference.",
     )
+    # ── Two-agent controller (intent detector + high-policy w_local) ───────
+    parser.add_argument(
+        "--two_agent",
+        action="store_true",
+        help="Use the two-agent controller: an Intent-Drift Detector predicts the "
+        "seller intent and a High-Policy LLM sets w_local on detected drift.",
+    )
+    parser.add_argument("--policy_hints_file", default=None,
+                        help="High-policy (w_local) hint playbook from train_hmod_2agent.py.")
+    parser.add_argument("--detector_hints_file", default=None,
+                        help="Intent-detector hint playbook from train_hmod_2agent.py.")
+    parser.add_argument(
+        "--fewshot_scenario_file",
+        default="config/scenario/generated/hmod_bargain_train_scenarios.yaml",
+        help="Train file used to build the detector's few-shot examples.",
+    )
     # ── Sample-dialogue logging + dialogue length ──────────────────────────
     parser.add_argument(
         "--verbose",
@@ -168,6 +184,39 @@ def _build_neural_buyer_policy(args):
     return NeuralBuyerPolicy(act_fn=low_policy.act)
 
 
+def _build_two_agent_controller(args):
+    """Build the inference two-agent controller (detector drives w_local)."""
+    from hmod.hints import HintStore
+    from hmod.high_policy import LLMHighPolicy
+    from hmod.intent_detector import LLMIntentDetector, build_intent_fewshot
+    from hmod.llm_reflection import LLMWeightReflector
+    from hmod.policy import RuleMetaController
+    from hmod.two_agent_controller import TwoAgentMetaController
+
+    reflector = LLMWeightReflector(
+        model=args.llm_model, api_key=args.llm_api_key,
+        api_key_env=args.llm_api_key_env, base_url=args.llm_base_url,
+        temperature=args.llm_temperature, max_tokens=args.llm_max_tokens,
+    )
+    policy_hints = HintStore(path=args.policy_hints_file) if args.policy_hints_file else HintStore()
+    detector_hints = HintStore(path=args.detector_hints_file) if args.detector_hints_file else HintStore()
+    logger.info(
+        f"two-agent: {len(policy_hints.hints)} policy hints, "
+        f"{len(detector_hints.hints)} detector hints loaded"
+    )
+    fewshot = build_intent_fewshot(args.fewshot_scenario_file)
+    detector = LLMIntentDetector(reflector=reflector, fewshot=fewshot,
+                                 hint_provider=detector_hints.provider())
+    high_policy = LLMHighPolicy(reflector=reflector, hint_provider=policy_hints.provider())
+    return TwoAgentMetaController(
+        detector=detector,
+        high_policy=high_policy,
+        fallback_controller=RuleMetaController(),
+        fallback_to_rule=args.llm_fallback_to_rule,
+        use_gold_intent=False,   # inference: detector drives w_local
+    )
+
+
 def main():
     args = parse_args()
     buyer_policy = None
@@ -186,6 +235,11 @@ def main():
         else:
             logger.info(f"Loaded {len(hint_store.hints)} general hints from {args.hints_file}")
             hint_provider = hint_store.provider()
+
+    meta_controller = None
+    if args.two_agent:
+        meta_controller = _build_two_agent_controller(args)
+
     result = run_and_write(
         scenario_file=args.scenario_file,
         mode=args.mode,
@@ -210,6 +264,7 @@ def main():
         verbose=args.verbose,
         turn_limit_mult=args.turn_limit_mult,
         hint_provider=hint_provider,
+        meta_controller=meta_controller,
     )
     print(json.dumps(result, indent=2, ensure_ascii=False))
     logger.info(f"Console log saved to: {_log_file}")

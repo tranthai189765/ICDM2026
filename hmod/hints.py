@@ -101,6 +101,56 @@ class HintStore:
         })
         self.save()
 
+    # ── review update (two-agent trainer) ───────────────────────────────
+    def review_update(
+        self,
+        remove_candidates: List[str],
+        add_hints: List[str],
+        metrics: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Apply a review step: a hint proposed for removal on two consecutive
+        epochs is dropped; otherwise its removal streak resets. New hints are
+        appended (deduplicated). Returns a small change report.
+        """
+        streaks: Dict[str, int] = self.meta.setdefault("removal_streak", {})
+        remove_set = {h.strip() for h in remove_candidates if isinstance(h, str) and h.strip()}
+
+        dropped: List[str] = []
+        kept: List[str] = []
+        for h in self.hints:
+            if h in remove_set:
+                streaks[h] = int(streaks.get(h, 0)) + 1
+                if streaks[h] >= 2:          # removed on 2 consecutive epochs -> drop
+                    dropped.append(h)
+                    streaks.pop(h, None)
+                    continue
+            else:
+                streaks.pop(h, None)         # reset streak
+            kept.append(h)
+
+        existing = {h.lower() for h in kept}
+        added: List[str] = []
+        for h in add_hints:
+            h = h.strip() if isinstance(h, str) else ""
+            if h and h.lower() not in existing:
+                kept.append(h)
+                existing.add(h.lower())
+                added.append(h)
+
+        self.hints = kept[: self.max_hints]
+        self.meta["iterations"] = int(self.meta.get("iterations", 0)) + 1
+        self.meta.setdefault("history", []).append({
+            "iteration": self.meta["iterations"],
+            "n_hints": len(self.hints),
+            "dropped": dropped,
+            "added": added,
+            "remove_proposed": sorted(remove_set),
+            "metrics": metrics or {},
+            "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        })
+        self.save()
+        return {"dropped": dropped, "added": added, "n_hints": len(self.hints)}
+
     # ── reading ──────────────────────────────────────────────────────────
     def is_empty(self) -> bool:
         return not self.hints

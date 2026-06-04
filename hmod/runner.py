@@ -113,6 +113,7 @@ class HMODEvaluator:
         verbose: bool = False,
         turn_limit_mult: float = 1.0,
         hint_provider: Optional[Any] = None,
+        meta_controller: Optional[Any] = None,
     ):
         if mode not in {"padpp_static", "hmod_dynamic", "hmod_no_mask"}:
             raise ValueError("mode must be one of padpp_static, hmod_dynamic, hmod_no_mask")
@@ -138,7 +139,11 @@ class HMODEvaluator:
             objective_id=objective_id,
             reflection_horizon=reflection_horizon,
         )
-        if controller_mode == "llm_reflection" and mode != "padpp_static":
+        if meta_controller is not None:
+            # Pre-built controller injected by a caller (e.g. the two-agent
+            # trainer/eval). It manages its own LLM agents and hints.
+            self.meta_controller = meta_controller
+        elif controller_mode == "llm_reflection" and mode != "padpp_static":
             reflector = LLMWeightReflector(
                 model=llm_model,
                 api_key=llm_api_key,
@@ -418,6 +423,7 @@ def run_and_write(
     verbose: bool = False,
     turn_limit_mult: float = 1.0,
     hint_provider: Optional[Any] = None,
+    meta_controller: Optional[Any] = None,
 ) -> Dict[str, Any]:
     scenarios = load_scenarios(scenario_file, limit=num_cases)
     run_id = f"{mode}_{time.strftime('%Y%m%d_%H%M%S')}"
@@ -445,6 +451,7 @@ def run_and_write(
         verbose=verbose,
         turn_limit_mult=turn_limit_mult,
         hint_provider=hint_provider,
+        meta_controller=meta_controller,
     )
     result = evaluator.run(scenarios)
 

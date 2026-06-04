@@ -114,3 +114,111 @@ def build_episode_digest(
     # failures first, then successes; cap
     rows.sort(key=lambda r: (r.get("gsr") or 0))
     return rows[:max_episodes]
+
+
+def build_detector_digest(
+    detector_records: List[Dict[str, Any]],
+    max_examples: int = 12,
+) -> Dict[str, Any]:
+    """Summarise the detector's per-turn predictions vs gold for the review."""
+    n = len(detector_records)
+    if n == 0:
+        return {"n_turns": 0, "intent_accuracy": None, "drift_accuracy": None,
+                "confusion": {}, "mistakes": []}
+    intent_ok = sum(1 for r in detector_records if r.get("intent_correct"))
+    drift_ok = sum(1 for r in detector_records if r.get("drift_correct"))
+    confusion: Dict[str, Dict[str, int]] = {}
+    mistakes: List[Dict[str, Any]] = []
+    for r in detector_records:
+        g, p = r.get("gold_intent"), r.get("pred_intent")
+        confusion.setdefault(g, {}).setdefault(p, 0)
+        confusion[g][p] += 1
+        if not r.get("intent_correct") or not r.get("drift_correct"):
+            mistakes.append({
+                "turn": r.get("turn"), "gold_intent": g, "pred_intent": p,
+                "gold_drift": r.get("gold_drift"), "pred_drift": r.get("pred_drift"),
+            })
+    return {
+        "n_turns": n,
+        "intent_accuracy": round(intent_ok / n, 3),
+        "drift_accuracy": round(drift_ok / n, 3),
+        "confusion_gold_to_pred": confusion,
+        "mistakes": mistakes[:max_examples],
+    }
+
+
+class ReviewHintDistiller:
+    """Reviewing distiller for the two-agent trainer.
+
+    Each epoch it reviews the whole epoch's feedback plus the current hints and
+    proposes which hints to REMOVE (no longer helping its task) and which to ADD.
+    `kind` selects the task framing: 'high_policy' (w_local quality, judged by
+    GSR/T2DA/CVR) or 'intent_detection' (drift/intent accuracy).
+    """
+
+    def __init__(self, reflector: LLMWeightReflector, kind: str):
+        if kind not in {"high_policy", "intent_detection"}:
+            raise ValueError("kind must be 'high_policy' or 'intent_detection'")
+        self.reflector = reflector
+        self.kind = kind
+
+    def review(
+        self,
+        current_hints: List[str],
+        feedback: Dict[str, Any],
+        epoch: int,
+    ) -> Dict[str, Any]:
+        messages = self._build_messages(current_hints, feedback, epoch)
+        content = self.reflector._complete(messages)
+        parsed = parse_reflection_json(content)
+        remove = [str(h).strip() for h in parsed.get("remove", []) if str(h).strip()]
+        add = [str(h).strip() for h in parsed.get("add", []) if str(h).strip()]
+        return {"remove": remove, "add": add, "analysis": str(parsed.get("analysis", ""))}
+
+    def _build_messages(self, current_hints, feedback, epoch) -> List[Dict[str, str]]:
+        if self.kind == "high_policy":
+            system = (
+                "You coach the High-Policy weight controller of a BUYER agent. It sets "
+                "w_local = [sl_ratio, fairness, deal_rate] from the current seller intent. "
+                "Review this epoch's metric feedback and the current hint playbook, then "
+                "propose which hints to REMOVE (not helping GSR/T2DA/CVR) and which general, "
+                "transferable hints to ADD. Hints are about how to set w_local for a given "
+                "seller intent, never about a specific item or price."
+            )
+            payload = {
+                "metric_glossary": METRIC_GLOSSARY,
+                "epoch": epoch,
+                "current_hints": current_hints or [],
+                "aggregate_metrics": feedback.get("aggregate_metrics"),
+                "self_play_episodes": feedback.get("episode_digest"),
+            }
+        else:
+            system = (
+                "You coach the Intent-Drift Detector of a negotiation buyer agent. It reads "
+                "the dialogue and predicts whether the SELLER intent drifted and what it is "
+                "(neutral|firm|final_offer|walkaway_risk). Review this epoch's accuracy "
+                "feedback (vs gold) and the current hint playbook, then propose which hints "
+                "to REMOVE (not improving accuracy) and which general detection hints to ADD "
+                "(cues that distinguish the intents)."
+            )
+            payload = {
+                "epoch": epoch,
+                "current_hints": current_hints or [],
+                "detection_feedback": feedback.get("detector_digest"),
+                "intent_definitions": feedback.get("intent_definitions"),
+            }
+        payload["instructions"] = (
+            "A hint proposed for removal on two consecutive epochs is dropped automatically. "
+            "Keep good hints (do not list them in remove), drop ones contradicted by the "
+            "feedback, add new ones the data suggests. Each hint <= 30 words, general."
+        )
+        payload["required_json_schema"] = {
+            "analysis": "2-4 sentences on what the feedback shows",
+            "remove": ["exact current-hint strings to remove", "..."],
+            "add": ["new general hint", "..."],
+        }
+        payload["output_instruction"] = "Return ONLY valid JSON with keys analysis, remove, add."
+        return [
+            {"role": "system", "content": system},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        ]
