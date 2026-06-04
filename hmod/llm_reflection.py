@@ -42,8 +42,22 @@ class LLMReflectionError(RuntimeError):
     pass
 
 
+# Model names that route through the project's own utils.prompt.call_llm
+# backends (which read FPT_API_KEY/FPT_API_URL/FPT_MODEL, etc. from .env)
+# instead of a standalone OpenAI-compatible client. Passing --llm_model fpt is
+# all that's needed; no --llm_base_url / --llm_api_key_env required.
+PROJECT_LLM_ROUTES = {"fpt", "qwen", "llama3", "chatgpt"}
+
+
 class LLMWeightReflector:
-    """OpenAI-compatible LLM client for H-MOD W_t reflection."""
+    """LLM client for H-MOD W_t reflection.
+
+    Two backends:
+      * project route (model in PROJECT_LLM_ROUTES, e.g. "fpt") → reuse
+        utils.prompt.call_llm so FPT/Qwen/Llama creds come straight from .env.
+      * generic OpenAI-compatible route (any other model name) → build an
+        openai.OpenAI client from api_key/base_url (DeepInfra, etc.).
+    """
 
     def __init__(
         self,
@@ -58,8 +72,14 @@ class LLMWeightReflector:
             model
             or os.getenv("HMOD_LLM_MODEL")
             or os.getenv("DEEPINFRA_MODEL")
+            # Default to the project FPT backend when only FPT creds are set up.
+            or ("fpt" if os.getenv("FPT_API_KEY") else None)
             or "Qwen/Qwen3-32B"
         )
+        # Decide backend from the (resolved) model name.
+        self.project_model_type = self.model.lower()
+        self.use_project_llm = self.project_model_type in PROJECT_LLM_ROUTES
+
         self.api_key_env = api_key_env
         self.api_key = api_key if api_key is not None else (
             os.getenv(api_key_env)
@@ -79,7 +99,8 @@ class LLMWeightReflector:
     def _client(self):
         if not self.api_key:
             raise LLMReflectionError(
-                "Missing LLM API key. Set DEEPINFRA_API_KEY in .env."
+                "Missing LLM API key. Set DEEPINFRA_API_KEY in .env "
+                "(or use --llm_model fpt to reuse FPT_API_KEY)."
             )
         try:
             import openai
@@ -89,6 +110,31 @@ class LLMWeightReflector:
         if self.base_url:
             kwargs["base_url"] = self.base_url
         return openai.OpenAI(**kwargs)
+
+    def _complete(self, messages: List[Dict[str, str]]) -> str:
+        """Run one chat completion via the selected backend, return raw text."""
+        if self.use_project_llm:
+            # Reuse the project FPT/Qwen/Llama backends — creds come from .env
+            # (FPT_API_KEY / FPT_API_URL / FPT_MODEL, etc.). call_llm returns a
+            # list of n responses; we asked for one.
+            from utils.prompt import call_llm
+
+            out = call_llm(
+                messages,
+                n=1,
+                temperature=self.temperature,
+                max_token=self.max_tokens,
+                model_type=self.project_model_type,
+            )
+            return out[0] if isinstance(out, (list, tuple)) else out
+        client = self._client()
+        response = client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+        )
+        return response.choices[0].message.content
 
     def reflect(
         self,
@@ -111,14 +157,7 @@ class LLMWeightReflector:
             last_seller_offer=last_seller_offer,
             experience=experience,
         )
-        client = self._client()
-        response = client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-        )
-        content = response.choices[0].message.content
+        content = self._complete(messages)
         parsed = parse_reflection_json(content)
         weight = coerce_reflection_weight(parsed.get("w_t"))
         return {
