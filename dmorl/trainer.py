@@ -435,18 +435,28 @@ class DMORLTrainer(PADPPTrainer):
             self.current_eps = self._epsilon_for_epoch(epoch, n_epochs)
             loguru_logger.info(f"[Phase-2] Epoch {epoch}: epsilon={self.current_eps:.3f}")
 
-            # 1. Sample candidate preferences for this epoch
+            # 1. Sample candidate preferences for this epoch. Their regret is
+            #    evaluated once per epoch (Q is frozen during the rollout) and
+            #    reused for the per-episode active sampling below.
             candidate_ws = [random_weights(n_obj) for _ in range(n_cand)]
-
-            # 2. Choose rollout preference (active-sampling or random)
+            epoch_regrets = None
             if use_active and len(buffer) >= self.model_config.regret_batch_size:
-                regrets = [self._evaluate_regret_for_w(w, buffer) for w in candidate_ws]
-                rollout_w = candidate_ws[int(np.argmax(regrets))]
-            else:
-                rollout_w = candidate_ws[np.random.randint(0, len(candidate_ws))]
+                epoch_regrets = np.array(
+                    [self._evaluate_regret_for_w(w, buffer) for w in candidate_ws],
+                    dtype=float)
 
-            # 3. Collect trajectories under rollout_w
+            # 3. Collect trajectories. The rollout preference is resampled PER
+            #    EPISODE (not once per epoch) so each epoch's buffer covers many
+            #    preferences. Active sampling draws candidates with probability
+            #    proportional to their regret (focus on under-converged regions);
+            #    otherwise a fresh random simplex weight per episode.
             for _ in range(self.model_config.sampled_times):
+                if epoch_regrets is not None and epoch_regrets.sum() > 0:
+                    p = epoch_regrets / epoch_regrets.sum()
+                    rollout_w = candidate_ws[int(np.random.choice(len(candidate_ws), p=p))]
+                else:
+                    rollout_w = random_weights(n_obj)
+
                 case = np.random.choice(cases)
                 simulator = np.random.choice(simulators)
                 state = self.game.reset(case, simulator)
