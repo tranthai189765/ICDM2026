@@ -470,7 +470,7 @@ python train_hmod_2agent.py \
   --num_cases 150 \
   --low_policy_checkpoint checkpoints/dmorl_phase2_best.pth \
   --low_policy_gen_models fpt --low_policy_model_type fpt \
-  --judge_model rule \
+  --judge_model fpt \
   --policy_hints_out outputs/hmod_policy_hints.json \
   --detector_hints_out outputs/hmod_detector_hints.json
 ```

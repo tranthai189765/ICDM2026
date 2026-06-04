@@ -42,8 +42,8 @@ def parse_args():
                    help="Drift eval mode used during self-play.")
     p.add_argument("--epochs", type=int, default=5,
                    help="Self-play + distillation rounds.")
-    p.add_argument("--judge_model", default="rule",
-                   help="Deal judge for self-play feedback (e.g. fpt or rule).")
+    p.add_argument("--judge_model", default="fpt",
+                   help="Deal judge for self-play feedback. Default 'fpt' (LLM); use 'rule' to save tokens.")
     p.add_argument("--reflection_horizon", type=int, default=4,
                    help="Macro-step length: hold w_local fixed for T low-policy "
                         "actions, then re-select w_local (default 4).")

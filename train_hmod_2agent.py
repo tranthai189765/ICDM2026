@@ -43,7 +43,8 @@ def parse_args():
                    help="Train file used to build detector few-shots (defaults to --scenario_file).")
     p.add_argument("--num_cases", type=int, default=None)
     p.add_argument("--epochs", type=int, default=6)
-    p.add_argument("--judge_model", default="rule")
+    p.add_argument("--judge_model", default="fpt",
+                   help="Deal judge for self-play feedback. Default 'fpt' (LLM); use 'rule' to save tokens.")
     p.add_argument("--turn_limit_mult", type=float, default=1.0)
     p.add_argument("--use_llm_simulator", action="store_true")
     p.add_argument("--verbose", action="store_true")

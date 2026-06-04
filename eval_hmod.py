@@ -39,8 +39,9 @@ def parse_args():
     parser.add_argument("--audit_sample_size", type=int, default=50)
     parser.add_argument(
         "--judge_model",
-        default="rule",
-        help="Use 'rule' for deterministic offline judging, or an existing LLM backend name.",
+        default="fpt",
+        help="Deal judge backend. Default 'fpt' (LLM judge, 1 call per dialogue); "
+        "use 'rule' for deterministic offline judging.",
     )
     parser.add_argument(
         "--use_llm_simulator",
