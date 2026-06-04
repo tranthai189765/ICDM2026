@@ -446,7 +446,7 @@ class DMORLTrainer(PADPPTrainer):
             sharp = None
             if use_active and len(buffer) >= self.model_config.regret_batch_size:
                 epoch_regrets = np.array(
-                    [self._evaluate_regret_for_w(w, buffer) for w in candidate_ws],
+                    [self._evaluate_regret_for_w(w, buffer, action_mapping) for w in candidate_ws],
                     dtype=float)
                 # Sharpen toward high-regret (not-yet-converged) preferences:
                 # p ∝ regret**power. power>1 prioritises the worst skills harder.
@@ -517,7 +517,7 @@ class DMORLTrainer(PADPPTrainer):
             # 5. Re-evaluate regret + update W_converged
             if len(buffer) >= self.model_config.regret_batch_size:
                 for w_cand in candidate_ws + [rollout_w]:
-                    reg = self._evaluate_regret_for_w(w_cand, buffer)
+                    reg = self._evaluate_regret_for_w(w_cand, buffer, action_mapping)
                     admitted = (reg < epsilon)
                     if admitted and not self._is_in_W_converged(w_cand):
                         self.W_converged.append(list(map(float, w_cand)))
@@ -578,12 +578,13 @@ class DMORLTrainer(PADPPTrainer):
     # Regret estimation
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _evaluate_regret_for_w(self, w, buffer) -> float:
+    def _evaluate_regret_for_w(self, w, buffer, action_mapping=None) -> float:
         """
         Reg(w) = E_{s in buffer} [ mean_{a, o} |Q_current(s, a, w) - Q_old(s, a, w)| ]
 
         Sample a small state batch from the replay buffer and average the
-        per-action, per-objective absolute Q-difference.
+        per-action, per-objective absolute Q-difference. action_mapping is
+        required because the data processor still computes an action label.
         """
         n = min(self.model_config.regret_batch_size, len(buffer))
         if n <= 0 or self.q_old_network is None:
@@ -594,7 +595,7 @@ class DMORLTrainer(PADPPTrainer):
 
         loader = self.construct_dataloaders(
             states, batch_size=n, shuffle=False,
-            goal2id=None, num_workers=0,
+            goal2id=action_mapping, num_workers=0,
         )
 
         w_tensor = torch.FloatTensor([list(w)]).to(self.device)  # [1, n_obj]
