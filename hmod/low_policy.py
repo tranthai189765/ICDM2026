@@ -133,6 +133,16 @@ class NeuralLowPolicy:
             combine=model_config.combined_action)
         self.n_bins = getattr(model_config, "n_topics", 5)
 
+        # The data processor always computes a (goal, bin) -> id label, even at
+        # inference where it is unused. It reads instance['response'] and
+        # instance['goal']; a fresh H-MOD state has neither. Pick any real goal
+        # so action_to_id[(goal, bin)] never KeyErrors (value is irrelevant).
+        _mapping = (self.action_mapping[0]
+                    if isinstance(self.action_mapping, tuple)
+                    else self.action_mapping)
+        _first_key = next(iter(_mapping))
+        self._default_goal = _first_key[0] if isinstance(_first_key, tuple) else _first_key
+
     # ─────────────────────────────────────────────────────────────────────
     def _price_from_action(self, strategy: str, bin_idx: int, dmorl_state: Dict[str, Any]) -> Optional[float]:
         tb = dmorl_state["task_background"]
@@ -155,6 +165,9 @@ class NeuralLowPolicy:
         """Map (state, w) -> {strategy, price, utterance} via the low policy."""
         dmorl_state = dict(dmorl_state)
         dmorl_state["w"] = list(weight)
+        # Dummy fields the data processor reads to build its (unused) SFT label.
+        dmorl_state.setdefault("response", "")
+        dmorl_state.setdefault("goal", self._default_goal)
         w_tensor = torch.FloatTensor(weight).to(self.device)
 
         with torch.no_grad():

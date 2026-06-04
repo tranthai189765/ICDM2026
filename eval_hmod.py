@@ -7,8 +7,20 @@ PADPP/DMORL buyer-agent role.
 
 import argparse
 import json
+import os
+import time
+
+from loguru import logger
 
 from hmod.runner import run_and_write
+
+# Tee loguru to a file in addition to the console. The default stderr sink is
+# kept so --verbose dialogues still print live; a copy lands in logs/ so the
+# turn-by-turn trace (seller intent, w_t, utterances) is persisted.
+os.makedirs("logs", exist_ok=True)
+_log_file = os.path.join("logs", f"hmod_eval_{time.strftime('%Y%m%d_%H%M%S')}.log")
+logger.add(_log_file, level="INFO", encoding="utf-8",
+           format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {message}")
 
 
 def parse_args():
@@ -183,6 +195,8 @@ def main():
         turn_limit_mult=args.turn_limit_mult,
     )
     print(json.dumps(result, indent=2, ensure_ascii=False))
+    logger.info(f"Console log saved to: {_log_file}")
+    logger.info(f"Structured outputs (dialogues/weight_trace/metrics) in: {result.get('run_dir')}")
 
 
 if __name__ == "__main__":
