@@ -34,7 +34,8 @@ class DMORLConfig(PADPPConfig):
     q_old_update_freq = 1              # Update Q_old every K RL epochs
     regret_batch_size = 64             # State batch size for regret estimation
     n_candidate_w = 32                 # Random w's drawn per epoch for regret screen
-    use_active_sampling = False        # Rollout under highest-regret w if True
+    use_active_sampling = False        # Prioritise high-regret w for rollout if True
+    regret_sampling_power = 2.0        # p ∝ regret**power (sharpen toward high regret)
     alpha_rpadpp = 0.5                 # L = (1-α)·L_self + α·L_know
 
     # Mask bin-redundant duplicate actions (non-price strategies at bin>0 are

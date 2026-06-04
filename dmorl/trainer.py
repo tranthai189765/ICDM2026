@@ -435,24 +435,37 @@ class DMORLTrainer(PADPPTrainer):
             self.current_eps = self._epsilon_for_epoch(epoch, n_epochs)
             loguru_logger.info(f"[Phase-2] Epoch {epoch}: epsilon={self.current_eps:.3f}")
 
-            # 1. Sample candidate preferences for this epoch. Their regret is
-            #    evaluated once per epoch (Q is frozen during the rollout) and
-            #    reused for the per-episode active sampling below.
-            candidate_ws = [random_weights(n_obj) for _ in range(n_cand)]
+            # 1. Candidate preferences for this epoch = the anchor skills PLUS
+            #    n_candidate_w random simplex weights, so the under-converged
+            #    anchors can be revisited. Their regret is evaluated once per
+            #    epoch (Q is frozen during the rollout) and reused for the
+            #    per-episode active sampling below.
+            candidate_ws = [list(map(float, w)) for w in anchor_weights] \
+                + [random_weights(n_obj) for _ in range(n_cand)]
             epoch_regrets = None
+            sharp = None
             if use_active and len(buffer) >= self.model_config.regret_batch_size:
                 epoch_regrets = np.array(
                     [self._evaluate_regret_for_w(w, buffer) for w in candidate_ws],
                     dtype=float)
+                # Sharpen toward high-regret (not-yet-converged) preferences:
+                # p ∝ regret**power. power>1 prioritises the worst skills harder.
+                power = getattr(self.model_config, 'regret_sampling_power', 2.0)
+                sharp = np.power(np.clip(epoch_regrets, 0.0, None), power)
+                top = candidate_ws[int(np.argmax(epoch_regrets))]
+                loguru_logger.info(
+                    f"[Phase-2] Epoch {epoch}: regret range "
+                    f"[{epoch_regrets.min():.4f}, {epoch_regrets.max():.4f}], "
+                    f"highest-regret w={[round(x,2) for x in top]}"
+                )
 
             # 3. Collect trajectories. The rollout preference is resampled PER
-            #    EPISODE (not once per epoch) so each epoch's buffer covers many
-            #    preferences. Active sampling draws candidates with probability
-            #    proportional to their regret (focus on under-converged regions);
-            #    otherwise a fresh random simplex weight per episode.
+            #    EPISODE. Active sampling draws a candidate with probability
+            #    proportional to regret**power (focus on under-converged
+            #    skills); otherwise a fresh random simplex weight per episode.
             for _ in range(self.model_config.sampled_times):
-                if epoch_regrets is not None and epoch_regrets.sum() > 0:
-                    p = epoch_regrets / epoch_regrets.sum()
+                if epoch_regrets is not None and sharp.sum() > 0:
+                    p = sharp / sharp.sum()
                     rollout_w = candidate_ws[int(np.random.choice(len(candidate_ws), p=p))]
                 else:
                     rollout_w = random_weights(n_obj)

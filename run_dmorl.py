@@ -148,7 +148,9 @@ def parse_dmorl_args():
     dmorl_parser.add_argument('--alpha_rpadpp', type=float, default=None,
                                help='Mixing weight: L = (1-α)·L_self + α·L_know')
     dmorl_parser.add_argument('--use_active_sampling', action='store_true', default=None,
-                               help='Pick highest-regret candidate w for rollout each epoch')
+                               help='Prioritise high-regret (not-yet-converged) w for Phase 2 rollout')
+    dmorl_parser.add_argument('--regret_sampling_power', type=float, default=None,
+                               help='Sharpen active sampling: p proportional to regret**power (default 2.0)')
     dmorl_parser.add_argument('--use_llm_price_extraction', action='store_true', default=False,
                                help='Use the LLM (gen model) to extract the buyer price in compute_reward')
     dmorl_parser.add_argument('--use_price_tag', action='store_true', default=False,
