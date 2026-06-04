@@ -139,6 +139,8 @@ def parse_dmorl_args():
                                help='Stop after Phase 1 anchor curriculum (save dmorl_phase1.pth and eval Table 2)')
     dmorl_parser.add_argument('--phase2_only', action='store_true', default=False,
                                help='Skip SFT + Phase 1 (load dmorl_phase1.pth), run R-PADPP Phase 2 only')
+    dmorl_parser.add_argument('--phase1_ckpt_name', type=str, default=None,
+                               help='Which Phase 1 ckpt Phase 2 loads (e.g. dmorl_phase1_best.pth). Default dmorl_phase1.pth')
     dmorl_parser.add_argument('--n_rpadpp_epochs', type=int, default=None,
                                help='Phase 2 RL epoch count override')
     dmorl_parser.add_argument('--epsilon_threshold', type=float, default=None,

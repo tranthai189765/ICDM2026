@@ -111,7 +111,11 @@ class DMORLPipeline(PADPPPipeline):
 
             if phase2_only:
                 saved_dir = getattr(self.model_config, "saved_dir", "checkpoints")
-                phase1_ckpt = os.path.join(saved_dir, "dmorl_phase1.pth")
+                # Which Phase 1 checkpoint to start Phase 2 from. Defaults to the
+                # last-epoch dmorl_phase1.pth; set --phase1_ckpt_name to load a
+                # best-checkpoint (dmorl_phase1_best.pth / *_best_wsum.pth).
+                ckpt_name = getattr(self.model_config, "phase1_ckpt_name", "dmorl_phase1.pth")
+                phase1_ckpt = os.path.join(saved_dir, ckpt_name)
                 if not os.path.exists(phase1_ckpt):
                     raise FileNotFoundError(
                         f"[DMORL phase2_only] Phase 1 checkpoint not found at "

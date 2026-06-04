@@ -576,8 +576,6 @@ class DMORLTrainer(PADPPTrainer):
         n_obj = self.model_config.n_objectives
         gamma = self.model_config.gamma
 
-        progress = tqdm = range  # avoid extra import; not strictly needed
-
         mean_total, mean_self, mean_know = [], [], []
 
         for i in range(self.model_config.num_train_q_network_epochs):

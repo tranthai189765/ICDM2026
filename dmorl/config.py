@@ -26,6 +26,7 @@ class DMORLConfig(PADPPConfig):
     force_rediscover_skills = False
     phase1_only = False                # Stop after Phase 1 (+ Table 2 eval)
     phase2_only = False                # Load Phase 1 checkpoint, run Phase 2 only
+    phase1_ckpt_name = "dmorl_phase1.pth"  # which Phase 1 ckpt Phase 2 starts from
 
     # ── Phase 2: R-PADPP (Regret-Gated GPI) ──────────────────────────────────
     n_rpadpp_epochs = 30               # RL epochs of regret-gated training
