@@ -63,8 +63,9 @@ def parse_args():
     parser.add_argument(
         "--reflection_horizon",
         type=int,
-        default=3,
-        help="Run objective self-reflection and update local W every T buyer turns.",
+        default=4,
+        help="Macro-step length: hold w_local fixed and let the low policy take T "
+        "actions, then re-select w_local. T=4 means 4 low-policy actions per w_local.",
     )
     parser.add_argument(
         "--controller_mode",

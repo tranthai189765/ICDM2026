@@ -44,7 +44,9 @@ def parse_args():
                    help="Self-play + distillation rounds.")
     p.add_argument("--judge_model", default="rule",
                    help="Deal judge for self-play feedback (e.g. fpt or rule).")
-    p.add_argument("--reflection_horizon", type=int, default=3)
+    p.add_argument("--reflection_horizon", type=int, default=4,
+                   help="Macro-step length: hold w_local fixed for T low-policy "
+                        "actions, then re-select w_local (default 4).")
     p.add_argument("--turn_limit_mult", type=float, default=1.0)
     p.add_argument("--use_llm_simulator", action="store_true")
     p.add_argument("--verbose", action="store_true",
