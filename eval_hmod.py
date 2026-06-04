@@ -128,6 +128,12 @@ def parse_args():
         default="outputs/hmod_experience.json",
         help="Where the cross-episode experience buffer is persisted.",
     )
+    parser.add_argument(
+        "--hints_file",
+        default=None,
+        help="Load a distilled general-hint playbook (from train_hmod.py) and "
+        "inject it into the LLM reflection prompt during inference.",
+    )
     # ── Sample-dialogue logging + dialogue length ──────────────────────────
     parser.add_argument(
         "--verbose",
@@ -170,6 +176,15 @@ def main():
     if args.use_experience_buffer:
         from hmod.experience import ExperienceBuffer
         experience_buffer = ExperienceBuffer(path=args.experience_path)
+    hint_provider = None
+    if args.hints_file:
+        from hmod.hints import HintStore
+        hint_store = HintStore(path=args.hints_file)
+        if hint_store.is_empty():
+            logger.warning(f"--hints_file {args.hints_file} has no hints; running without a playbook.")
+        else:
+            logger.info(f"Loaded {len(hint_store.hints)} general hints from {args.hints_file}")
+            hint_provider = hint_store.provider()
     result = run_and_write(
         scenario_file=args.scenario_file,
         mode=args.mode,
@@ -193,6 +208,7 @@ def main():
         experience_buffer=experience_buffer,
         verbose=args.verbose,
         turn_limit_mult=args.turn_limit_mult,
+        hint_provider=hint_provider,
     )
     print(json.dumps(result, indent=2, ensure_ascii=False))
     logger.info(f"Console log saved to: {_log_file}")

@@ -112,6 +112,7 @@ class HMODEvaluator:
         experience_buffer: Optional[Any] = None,
         verbose: bool = False,
         turn_limit_mult: float = 1.0,
+        hint_provider: Optional[Any] = None,
     ):
         if mode not in {"padpp_static", "hmod_dynamic", "hmod_no_mask"}:
             raise ValueError("mode must be one of padpp_static, hmod_dynamic, hmod_no_mask")
@@ -158,14 +159,34 @@ class HMODEvaluator:
         # backed by the trained R-PADPP low policy (merged-pipeline path).
         self.buyer_policy = buyer_policy if buyer_policy is not None else RuleBuyerPolicy()
 
-        # Cross-episode experience: feed past outcomes into the LLM reflection.
+        # Grounding for the LLM reflection: general hints (from H-MOD hint
+        # training) + per-(goal, drift) experience summary. Both feed the same
+        # `experience_provider` slot, composed into one block.
         self.experience_buffer = experience_buffer
-        if experience_buffer is not None and isinstance(self.meta_controller, LLMReflectionMetaController):
-            self.meta_controller.experience_provider = (
-                lambda macro_goal, drift_mode: (
-                    (experience_buffer.summarize(macro_goal, drift_mode) or {}).get("text")
+        self.hint_provider = hint_provider
+        if isinstance(self.meta_controller, LLMReflectionMetaController):
+            providers = []
+            if hint_provider is not None:
+                providers.append(hint_provider)
+            if experience_buffer is not None:
+                providers.append(
+                    lambda macro_goal, drift_mode: (
+                        (experience_buffer.summarize(macro_goal, drift_mode) or {}).get("text")
+                    )
                 )
-            )
+            if providers:
+                def _combined(macro_goal, drift_mode, _providers=providers):
+                    parts = []
+                    for prov in _providers:
+                        try:
+                            text = prov(macro_goal, drift_mode)
+                        except Exception:
+                            text = None
+                        if text:
+                            parts.append(text)
+                    return "\n\n".join(parts) if parts else None
+
+                self.meta_controller.experience_provider = _combined
 
     def run_dialogue(self, scenario: HMODScenario) -> Dict[str, Any]:
         simulator = DynamicSellerNegotiationSimulator(
@@ -396,6 +417,7 @@ def run_and_write(
     experience_buffer: Optional[Any] = None,
     verbose: bool = False,
     turn_limit_mult: float = 1.0,
+    hint_provider: Optional[Any] = None,
 ) -> Dict[str, Any]:
     scenarios = load_scenarios(scenario_file, limit=num_cases)
     run_id = f"{mode}_{time.strftime('%Y%m%d_%H%M%S')}"
@@ -422,6 +444,7 @@ def run_and_write(
         experience_buffer=experience_buffer,
         verbose=verbose,
         turn_limit_mult=turn_limit_mult,
+        hint_provider=hint_provider,
     )
     result = evaluator.run(scenarios)
 

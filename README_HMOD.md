@@ -13,6 +13,11 @@
 > 3. **Experience accumulation.** `--use_experience_buffer`
 >    (`hmod/experience.py`) feeds a summary of past episode outcomes into the LLM
 >    reflection prompt so `w_local` improves over time.
+> 4. **Hint training (`train_hmod.py`).** The LLM controller self-plays against
+>    the drift simulator, reads back the full metric feedback with a glossary,
+>    and an LLM distiller turns it into a reusable playbook of *general hints*
+>    saved to JSON. Eval loads it via `--hints_file` to ground inference. See
+>    section 4.4 below.
 >
 > The merged-pipeline overview lives in the main `README.md` (section 7). Some
 > examples below still show the original 4-D weights, which load fine via the
@@ -345,6 +350,61 @@ Phase 2: dynamic objective-conditioned RLT
 ```text
 checkpoints/hmod_neg/hmod_phase2_dynamic.pth
 ```
+
+### 4.4 LLM Hint Training (`train_hmod.py`)
+
+This is a lightweight, *no-gradient* training loop for the **LLM meta-controller**
+(the low policy is the already-trained R-PADPP checkpoint and is frozen). The LLM
+learns, in natural language, *when to shift `w_t`* by self-playing and reading
+back its own metric feedback.
+
+Loop (`hmod/hint_trainer.py`):
+
+1. **Self-play epoch.** Run every drift scenario with the neural low policy and
+   the LLM controller, injecting the current hint playbook into the reflection
+   prompt (`hint_provider` → `experience_provider`).
+2. **Metric feedback.** Aggregate GSR / llm_sr / T2DA / CVR, and build a compact
+   per-episode digest (`build_episode_digest`): which `w_t` was used under which
+   seller intent, and the resulting metrics (failures first).
+3. **Distill (`hmod/hint_distiller.py`).** An LLM receives the **metric glossary**
+   (`hmod/hints.py:METRIC_GLOSSARY`, so it understands what each metric rewards),
+   the digest, the aggregate metrics and the current hints, and rewrites a small
+   set of **general, transferable hints** (≤ `--max_hints`).
+4. **Persist (`hmod/hints.py:HintStore`).** Hints + iteration history + glossary
+   are saved to `--hints_out` JSON and logged to `logs/hmod_train_<ts>.log`.
+
+Run it:
+
+```bash
+python train_hmod.py \
+  --epochs 5 \
+  --scenario_file config/scenario/hmod_buyer_drift_scenarios.yaml \
+  --llm_model fpt \
+  --low_policy_checkpoint checkpoints/dmorl_phase2_best.pth \
+  --low_policy_gen_models fpt --low_policy_model_type fpt \
+  --judge_model fpt \
+  --turn_limit_mult 2.0 \
+  --hints_out outputs/hmod_hints.json
+```
+
+Then evaluate with the learned playbook loaded back in:
+
+```bash
+python eval_hmod.py \
+  --mode hmod_dynamic --controller_mode llm_reflection --llm_model fpt \
+  --low_policy_checkpoint checkpoints/dmorl_phase2_best.pth \
+  --low_policy_gen_models fpt --low_policy_model_type fpt \
+  --judge_model fpt \
+  --hints_file outputs/hmod_hints.json \
+  --verbose --turn_limit_mult 3.0
+```
+
+Notes:
+- The controller and the distiller share the same LLM backend (`--llm_model fpt`
+  reuses `FPT_*` from `.env`).
+- `--hints_file` composes with `--use_experience_buffer`: general hints + the
+  per-`(goal, drift)` experience summary are concatenated into one grounding block.
+- `--resume_hints` continues from an existing `--hints_out` instead of starting empty.
 
 ## 5. How H-MOD Evaluation Works
 
