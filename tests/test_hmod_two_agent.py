@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 from hmod.high_policy import LLMHighPolicy, parse_allocation_to_weight
 from hmod.hints import HintStore
 from hmod.intent_detector import LLMIntentDetector, build_intent_fewshot
+from hmod.metrics import compute_t2da
 from hmod.scenario import load_scenarios
 from hmod.two_agent_controller import TwoAgentMetaController
 
@@ -125,3 +126,20 @@ def test_review_streak_resets_when_not_proposed(tmp_path):
     store.review_update([], [], {})             # reset
     store.review_update(["A"], [], {})          # streak 1 again, never 2-in-a-row
     assert "A" in store.hints
+
+
+# ── relaxed T2DA direction check ─────────────────────────────────────────────
+def test_t2da_relaxed_allows_flat_objective():
+    wt = [{"turn": 0, "weight_vector": [0.6, 0.2, 0.2]},
+          {"turn": 1, "weight_vector": [0.3, 0.2, 0.5]}]  # sl down, deal up, fairness flat
+    out = compute_t2da(wt, t_drift=1, turn_limit=8,
+                       expected_weight_shift={"sl_ratio": "down", "fairness": "up", "deal_rate": "up"})
+    assert out["adapted"] is True and out["t2da"] == 0
+
+
+def test_t2da_penalises_opposite_move():
+    wt = [{"turn": 0, "weight_vector": [0.6, 0.2, 0.2]},
+          {"turn": 1, "weight_vector": [0.8, 0.1, 0.1]}]   # sl_ratio UP = opposite of expected down
+    out = compute_t2da(wt, t_drift=1, turn_limit=8,
+                       expected_weight_shift={"sl_ratio": "down", "deal_rate": "up"})
+    assert out["adapted"] is False

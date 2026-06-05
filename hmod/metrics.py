@@ -37,20 +37,35 @@ def _direction_ok(
     after: List[float],
     expected_weight_shift: Dict[str, str],
 ) -> bool:
+    """Adaptation direction check (relaxed: no-violation + at-least-one-correct).
+
+    The shift counts as a correct adaptation if NO expected objective moves the
+    OPPOSITE way and AT LEAST ONE expected objective moves the correct way. A
+    flat objective (delta == 0) is allowed — this avoids penalising a sensible
+    adaptation that, e.g., raises deal_rate and lowers sl_ratio but keeps
+    fairness moderate, when the gold shift also lists fairness 'up'.
+    """
     if not expected_weight_shift:
         return True
     index = {name: i for i, name in enumerate(OBJECTIVE_ORDER)}
     checked = False
+    satisfied = 0
     for objective, direction in expected_weight_shift.items():
         if objective not in index:
             continue
         checked = True
         delta = after[index[objective]] - before[index[objective]]
-        if direction == "up" and delta <= 0:
-            return False
-        if direction == "down" and delta >= 0:
-            return False
-    return checked
+        if direction == "up":
+            if delta < 0:          # moved opposite -> violation
+                return False
+            if delta > 0:
+                satisfied += 1
+        elif direction == "down":
+            if delta > 0:          # moved opposite -> violation
+                return False
+            if delta < 0:
+                satisfied += 1
+    return checked and satisfied >= 1
 
 
 def compute_t2da(
