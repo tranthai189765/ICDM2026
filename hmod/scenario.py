@@ -16,7 +16,30 @@ ALLOWED_DRIFT_MODES = {
     "abrupt_ultimatum",
 }
 
-OBJECTIVE_ORDER = ["sl_ratio", "fairness", "deal_rate", "avg_turn"]
+# H-MOD merged into the 3-objective R-PADPP low policy. The low policy is
+# trained on [sl_ratio, fairness, deal_rate] (no avg_turn), so the dynamic
+# controller must emit 3-D weights. Legacy 4-D vectors (with a trailing
+# avg_turn term) are still accepted on load and collapsed to 3-D.
+OBJECTIVE_ORDER = ["sl_ratio", "fairness", "deal_rate"]
+
+
+def coerce_objective_weight(vec: List[float]) -> List[float]:
+    """Collapse a weight vector to the active OBJECTIVE_ORDER length.
+
+    A legacy 4-D [sl_ratio, fairness, deal_rate, avg_turn] vector drops the
+    trailing avg_turn term; any over-long vector is truncated. The result is
+    renormalised to sum to 1 (falls back to uniform if degenerate).
+    """
+    vals = [float(x) for x in vec]
+    n = len(OBJECTIVE_ORDER)
+    if len(vals) > n:
+        vals = vals[:n]
+    elif len(vals) < n:
+        vals = vals + [0.0] * (n - len(vals))
+    total = sum(vals)
+    if total <= 0:
+        return [1.0 / n] * n
+    return [x / total for x in vals]
 
 
 @dataclass
@@ -122,15 +145,11 @@ def _normalize_drift_mode(mode: str) -> str:
 
 def parse_scenario(raw: Dict[str, Any]) -> HMODScenario:
     scenario_id = str(_require(raw, "id", "<unknown>"))
-    static_w = [float(x) for x in _require(raw, "static_w", scenario_id)]
-    if len(static_w) != len(OBJECTIVE_ORDER):
-        raise ValueError(
-            f"Scenario {scenario_id!r} static_w must have {len(OBJECTIVE_ORDER)} entries"
-        )
-    if any(x < 0 for x in static_w) or sum(static_w) <= 0:
+    raw_static_w = [float(x) for x in _require(raw, "static_w", scenario_id)]
+    if any(x < 0 for x in raw_static_w) or sum(raw_static_w) <= 0:
         raise ValueError(f"Scenario {scenario_id!r} static_w must be non-negative")
-    total = sum(static_w)
-    static_w = [x / total for x in static_w]
+    # Accept legacy 4-D vectors and collapse to the active 3-D objective space.
+    static_w = coerce_objective_weight(raw_static_w)
 
     drift_mode = _normalize_drift_mode(str(_require(raw, "drift_mode", scenario_id)))
     if drift_mode not in ALLOWED_DRIFT_MODES:

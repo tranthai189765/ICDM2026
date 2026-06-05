@@ -72,7 +72,7 @@ BUYER_STRATEGY_MACRO_CLUSTERS = {
 def test_load_hmod_scenarios():
     scenarios = load_scenarios(SCENARIO_FILE)
     assert len(scenarios) >= 8
-    assert all(len(s.static_w) == 4 for s in scenarios)
+    assert all(len(s.static_w) == 3 for s in scenarios)
     assert all(s.buyer_intent_id for s in scenarios)
     assert {s.buyer_intent_id for s in scenarios} >= {
         "AGGRESSIVE_SAVINGS_THEN_RECOVERY",
@@ -163,10 +163,12 @@ def test_buyer_objective_library_maps_ambiguous_intent(tmp_path):
     assert mapping.source == "buyer_strategy_objective"
     assert round(sum(mapping.weight_vector), 6) == 1
     assert mapping.weight_vector[2] > mapping.weight_vector[0]
+    # stage_weights are collapsed to the 3-D objective space on load
+    # ([0.35, 0.25, 0.32, 0.08] drops avg_turn and renormalises).
     assert [
         round(x, 2)
         for x in library.get("PRICE_GAIN_BUT_DEAL_AWARE").stage_weights["firm_response"]
-    ] == [0.35, 0.25, 0.32, 0.08]
+    ] == [0.38, 0.27, 0.35]
 
 
 def test_llm_reflection_json_parsing_and_weight_normalization():
@@ -182,7 +184,7 @@ def test_llm_reflection_json_parsing_and_weight_normalization():
     weight = coerce_reflection_weight(parsed["w_t"])
 
     assert parsed["detected_seller_intent"] == "firm"
-    assert [round(x, 2) for x in weight] == [0.5, 0.25, 0.25, 0.0]
+    assert [round(x, 2) for x in weight] == [0.5, 0.25, 0.25]
 
 
 def test_llm_reflector_defaults_to_deepinfra_env(monkeypatch):
@@ -240,7 +242,7 @@ def test_meta_controller_reflects_every_t_steps(tmp_path):
     assert third["reflection_step"] is True
     assert third["selected_objective_id"] == "PRICE_GAIN_BUT_DEAL_AWARE"
     assert third["weight_vector"] != second["weight_vector"]
-    assert [round(x, 2) for x in third["weight_vector"]] == [0.35, 0.25, 0.32, 0.08]
+    assert [round(x, 2) for x in third["weight_vector"]] == [0.38, 0.27, 0.35]
 
 
 def test_eval_hmod_runner_writes_outputs(tmp_path):
@@ -317,8 +319,8 @@ def test_eval_hmod_runner_llm_reflection_fallback_mode(tmp_path):
 def test_hmod_training_controller_builds_dmorl_skill_library(tmp_path):
     objective_file = _write_objective_file(tmp_path)
     controller = HMODController(
-        n_objectives=4,
-        objective_names=["sl_ratio", "fairness", "deal_rate", "avg_turn"],
+        n_objectives=3,
+        objective_names=["sl_ratio", "fairness", "deal_rate"],
         scenario="negotiation",
         objective_file=str(objective_file),
         objective_id="PRICE_GAIN_BUT_DEAL_AWARE",
@@ -333,15 +335,15 @@ def test_hmod_training_controller_builds_dmorl_skill_library(tmp_path):
     assert len(controller.skill_library.basic_skills) == 2
     assert controller.skill_library.basic_skills[0]["name"] == "PRICE_GAIN_BUT_DEAL_AWARE"
     assert len(controller.skill_library.advanced_skills) == 2
-    assert all(len(skill["weight_vector"]) == 4 for skill in controller.skill_library.basic_skills)
+    assert all(len(skill["weight_vector"]) == 3 for skill in controller.skill_library.basic_skills)
     assert (tmp_path / "skills.json").exists()
 
 
 def test_hmod_training_controller_reflects_dynamic_weight(tmp_path):
     objective_file = _write_objective_file(tmp_path)
     controller = HMODController(
-        n_objectives=4,
-        objective_names=["sl_ratio", "fairness", "deal_rate", "avg_turn"],
+        n_objectives=3,
+        objective_names=["sl_ratio", "fairness", "deal_rate"],
         scenario="negotiation",
         objective_file=str(objective_file),
         objective_id="PRICE_GAIN_BUT_DEAL_AWARE",

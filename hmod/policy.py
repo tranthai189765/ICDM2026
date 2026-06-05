@@ -4,18 +4,17 @@ from typing import Any, Dict, List, Optional
 
 from hmod.llm_reflection import LLMWeightReflector
 from hmod.objectives import BuyerObjectiveLibrary, BuyerStrategyObjective, ObjectiveMapping
-from hmod.scenario import HMODScenario
+from hmod.scenario import HMODScenario, coerce_objective_weight
 
 
 PRICE_ACTIONS = {"propose", "counter", "agree", "final_offer"}
 
 
 def normalize_weight(weight: List[float]) -> List[float]:
+    # Collapse to the active 3-D objective space and renormalise (legacy 4-D
+    # vectors drop their trailing avg_turn term).
     weight = [max(0.0, float(x)) for x in weight]
-    total = sum(weight)
-    if total <= 0:
-        return [0.25, 0.25, 0.25, 0.25]
-    return [x / total for x in weight]
+    return coerce_objective_weight(weight)
 
 
 class RuleMetaController:
@@ -193,23 +192,23 @@ class RuleMetaController:
         adjustments: List[str] = []
         drift_states = {"firm", "final_offer", "walkaway_risk", "frustrated"}
 
+        # 3-D objective space [sl_ratio, fairness, deal_rate]. The former
+        # avg_turn (urgency) adjustments are folded into deal_rate, since under
+        # the merged pipeline "close faster" is expressed by raising deal_rate.
         if intent_state == "final_offer":
             weight[0] -= 0.22  # sl_ratio / buyer price gain
             weight[1] += 0.05  # fairness
-            weight[2] += 0.22  # deal_rate
-            weight[3] += 0.08  # avg_turn urgency
+            weight[2] += 0.30  # deal_rate (incl. folded urgency)
             adjustments.append("seller issued final offer, prioritize securing the item")
         elif intent_state in {"walkaway_risk", "frustrated"}:
             weight[0] -= 0.25
             weight[1] += 0.10
-            weight[2] += 0.20
-            weight[3] += 0.05
+            weight[2] += 0.25
             adjustments.append("seller walkaway risk detected, reduce bargain aggression")
         elif intent_state == "firm":
             weight[0] -= 0.15
             weight[1] += 0.07
-            weight[2] += 0.13
-            weight[3] += 0.03
+            weight[2] += 0.16
             adjustments.append("seller became firm, trade some price gain for deal probability")
         elif intent_state not in drift_states:
             adjustments.append("no seller drift signal, keep buyer objective-derived priority")
@@ -358,7 +357,10 @@ class RuleBuyerPolicy:
         target_price = scenario.target_price()
         item_name = scenario.case["item_name"]
         seller_offer = self._last_seller_offer(state)
-        price_gain_w, fairness_w, deal_w, turn_w = weight
+        # 3-D weight [sl_ratio, fairness, deal_rate]; closing urgency (old
+        # avg_turn) is now folded into deal_rate.
+        price_gain_w, fairness_w, deal_w = (list(weight) + [0.0, 0.0, 0.0])[:3]
+        turn_w = 0.0
 
         if seller_offer is not None and seller_offer <= max_price and deal_w >= price_gain_w:
             raw_action = {"strategy": "agree", "price": seller_offer}
@@ -407,6 +409,88 @@ class RuleBuyerPolicy:
 RuleSellerPolicy = RuleBuyerPolicy
 
 
+class NeuralBuyerPolicy:
+    """Buyer policy backed by the trained R-PADPP neural low policy.
+
+    This is the merged-pipeline worker: the H-MOD meta-controller produces the
+    dynamic 3-D weight w_t, and this policy delegates the per-turn action to the
+    trained DMORL/R-PADPP low policy (w -> action) instead of the hand-written
+    RuleBuyerPolicy.
+
+    `act_fn(dmorl_state: dict, weight: List[float]) -> dict` must return:
+        {"strategy": str, "price": Optional[float], "utterance": str}
+    where the low policy has mapped (state, w) -> (strategy, bin) -> a buyer
+    utterance and its committed price. The heavy DMORL wiring lives in
+    `hmod.low_policy.NeuralLowPolicy` so this class stays import-light.
+    """
+
+    def __init__(self, act_fn):
+        self.act_fn = act_fn
+
+    @staticmethod
+    def _build_dmorl_state(scenario: HMODScenario, state: Dict[str, Any]) -> Dict[str, Any]:
+        case = scenario.case
+        return {
+            "task_background": {
+                "item_name": case["item_name"],
+                "buyer_price": case["buyer_price"],
+                "seller_price": case["seller_price"],
+                "buyer_item_description": case.get("buyer_item_description", ""),
+                "seller_item_description": case.get("seller_item_description", ""),
+            },
+            "dialogue_context": list(state.get("dialogue_context", [])),
+            "pre_goals": [""],
+            "pre_topics": [""],
+            "goal": "greet",
+        }
+
+    def select_action(
+        self,
+        scenario: HMODScenario,
+        state: Dict[str, Any],
+        weight: List[float],
+        mode: str,
+    ) -> Dict[str, Any]:
+        max_price = scenario.max_acceptable_price()
+        item_name = scenario.case["item_name"]
+        dmorl_state = self._build_dmorl_state(scenario, state)
+
+        out = self.act_fn(dmorl_state, list(weight))
+        strategy = out.get("strategy")
+        price = out.get("price")
+        utterance = out.get("utterance") or ""
+
+        raw_action = {"strategy": strategy, "price": price}
+        blocked = False
+        reason = None
+        action = dict(raw_action)
+        if (
+            mode != "hmod_no_mask"
+            and strategy in PRICE_ACTIONS
+            and price is not None
+            and float(price) > max_price
+        ):
+            blocked = True
+            reason = "price_above_max_acceptable_ceiling"
+            action = {"strategy": "counter", "price": round(max_price, 2)}
+            utterance = f"That is above my budget; I can do ${max_price:.0f} for the {item_name}."
+
+        actual_violation = (
+            action["strategy"] in PRICE_ACTIONS
+            and action.get("price") is not None
+            and float(action["price"]) > max_price
+        )
+        return {
+            "raw_action": raw_action,
+            "action": action,
+            "buyer_response": utterance,
+            "blocked_violation": blocked,
+            "actual_violation": bool(actual_violation),
+            "violation_reason": reason,
+            "max_acceptable_price": max_price,
+        }
+
+
 class LLMReflectionMetaController:
     """Paper-path meta-controller: one NL objective -> LLM-reflected W_t."""
 
@@ -416,6 +500,7 @@ class LLMReflectionMetaController:
         reflection_horizon: int = 3,
         fallback_controller: Optional[RuleMetaController] = None,
         fallback_to_rule: bool = False,
+        experience_provider=None,
     ):
         if reflection_horizon <= 0:
             raise ValueError("reflection_horizon must be a positive integer")
@@ -423,6 +508,9 @@ class LLMReflectionMetaController:
         self.reflection_horizon = reflection_horizon
         self.fallback_controller = fallback_controller
         self.fallback_to_rule = fallback_to_rule
+        # Optional callable(macro_goal, drift_mode) -> Optional[str] returning a
+        # short summary of past episode outcomes to ground the reflection.
+        self.experience_provider = experience_provider
 
     def _should_reflect(self, turn: int, previous_weight: Optional[List[float]]) -> bool:
         return previous_weight is None or turn % self.reflection_horizon == 0
@@ -520,6 +608,14 @@ class LLMReflectionMetaController:
                 "controller_mode": "llm_reflection",
             }
 
+        experience_text = None
+        if self.experience_provider is not None:
+            try:
+                experience_text = self.experience_provider(
+                    scenario.macro_goal, scenario.drift_mode)
+            except Exception:
+                experience_text = None
+
         try:
             reflection = self.reflector.reflect(
                 macro_goal=scenario.macro_goal,
@@ -533,6 +629,7 @@ class LLMReflectionMetaController:
                 },
                 item_context=scenario.case,
                 last_seller_offer=self._latest_visible_seller_offer(dialogue_history),
+                experience=experience_text,
             )
         except Exception as exc:
             return self._fallback(

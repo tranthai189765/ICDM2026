@@ -183,8 +183,23 @@ class NegotiationGameConfig(GameConfig):
     epsilon = 1.0
     terminated_action = "Say goodbye"
     max_horizon = 5
-    objectives = [SL_RATIO, FAIRNESS, SUCCESS_RATE, AVG_TURN]
+    objectives = [SL_RATIO, FAIRNESS, SUCCESS_RATE]
     n_objectives = len(objectives)
+    # If True, compute_reward delegates buyer price extraction to the LLM
+    # (CLI: --use_llm_price_extraction). Default off → regex heuristic.
+    use_llm_price_extraction = False
+    # If True, the buyer/seller LLMs append a [[PRICE: x]] tag to every reply
+    # and compute_reward parses the buyer tag directly (CLI: --use_price_tag).
+    use_price_tag = False
+    # Multiplier applied to the fairness reward during training to offset its
+    # smaller [-0.5, 0.5] range vs gain/deal's [-1, 1]/{0,1}. Set to 2.0 for
+    # training, keep 1.0 for eval so reported r_fair matches the paper.
+    fairness_train_scale = 1.0
+    # Per-turn penalty subtracted from the DEAL reward component during
+    # training (CLI: --turn_penalty). Gives closing pressure proportional to
+    # the skill's deal weight (Deal/Uniform close, pure Fairness/Gain hold).
+    # Keep 0.0 at eval so reported metrics stay clean.
+    turn_penalty = 0.0
     pass
 
 

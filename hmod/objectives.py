@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from hmod.scenario import OBJECTIVE_ORDER
+from hmod.scenario import OBJECTIVE_ORDER, coerce_objective_weight
 
 
 DEFAULT_CLUSTER_PRIORS: Dict[str, List[float]] = {
@@ -91,11 +91,12 @@ KEYWORD_DELTAS: Tuple[Tuple[Tuple[str, ...], List[float]], ...] = (
 
 
 def normalize_weight(weight: Iterable[float]) -> List[float]:
+    # Clamp negatives, then collapse to the active 3-D objective space and
+    # renormalise. The cluster priors / keyword deltas below are still authored
+    # as 4-D (…, avg_turn) and combined element-wise; collapsing here drops the
+    # trailing avg_turn term once, at the end, so callers always see 3-D w.
     values = [max(0.0, float(x)) for x in weight]
-    total = sum(values)
-    if total <= 0:
-        return [1.0 / len(OBJECTIVE_ORDER)] * len(OBJECTIVE_ORDER)
-    return [x / total for x in values]
+    return coerce_objective_weight(values)
 
 
 @dataclass(frozen=True)

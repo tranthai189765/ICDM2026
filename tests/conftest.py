@@ -5,12 +5,20 @@ import sys
 import os
 import types
 import importlib.machinery
+import importlib.util
 from unittest.mock import MagicMock
 
 # ── Project root on sys.path (no setup.py) ────────────────────────────────────
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
+
+# Our top-level packages `utils`/`base` are namespace packages (no __init__.py),
+# so a foreign *editable* install on the global interpreter that ships a regular
+# `utils`/`base` package would shadow ours (regular package wins over namespace).
+# Drop such unrelated editable entries so tests always import THIS project's code.
+# No-op in a clean environment.
+sys.path[:] = [p for p in sys.path if "legal_btc_graph" not in p.lower()]
 
 # ── Stub heavy/absent packages before any project imports ────────────────────
 # These are installed on the training server but not in the local test env.
@@ -56,7 +64,7 @@ _LOCAL_STUBS = [
     "peft",
 ]
 for _pkg in _LOCAL_STUBS:
-    if _pkg not in sys.modules:
+    if _pkg not in sys.modules and importlib.util.find_spec(_pkg) is None:
         sys.modules[_pkg] = _make_stub(_pkg)
 
 import pytest
@@ -161,4 +169,6 @@ def make_trainer(
     trainer.model = MagicMock()
     trainer.game = MagicMock()
     trainer.memory_buffer = []
+    trainer.save_model = MagicMock()
+    trainer._eval_basic_skills_per_skill = MagicMock()
     return trainer

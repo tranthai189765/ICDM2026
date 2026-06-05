@@ -7,6 +7,70 @@ from loguru import logger
 from config.constants import *
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Price-tag protocol (CLI: --use_price_tag)
+#
+# Instead of regex-guessing the buyer/seller price out of a free-form
+# utterance, we ask the speaking LLM to append a machine-readable tag that
+# states the exact price it is offering/accepting right now. We then parse
+# that tag deterministically. The tag is stripped before the utterance is
+# shown to the other party / stored in the dialogue context.
+# ─────────────────────────────────────────────────────────────────────────────
+
+PRICE_TAG_RE = re.compile(r"\[\[\s*PRICE\s*:\s*([0-9]*\.?[0-9]+|NONE)\s*\]\]",
+                          re.IGNORECASE)
+
+PRICE_TAG_INSTRUCTION_BUYER = (
+    " IMPORTANT: at the very end of your reply append a machine tag stating the "
+    "exact price (digits only, no $) you are offering or accepting RIGHT NOW, in "
+    "the exact format [[PRICE: <amount>]]. If you are not naming any price in this "
+    "message, append [[PRICE: NONE]] instead."
+)
+
+PRICE_TAG_INSTRUCTION_SELLER = (
+    " IMPORTANT: at the very end of your reply append a machine tag stating the "
+    "exact price (digits only, no $) you are asking for or accepting RIGHT NOW, in "
+    "the exact format [[PRICE: <amount>]]. If you are not naming any price in this "
+    "message, append [[PRICE: NONE]] instead."
+)
+
+
+def extract_price_tag(text):
+    """Return the float price declared in a [[PRICE: x]] tag, or None.
+
+    None is returned both when the tag is absent and when it reads NONE.
+    The LAST tag in the text wins (in case the model emitted several).
+    """
+    if not text:
+        return None
+    matches = PRICE_TAG_RE.findall(text)
+    if not matches:
+        return None
+    last = matches[-1].strip()
+    if last.upper() == "NONE":
+        return None
+    try:
+        return float(last)
+    except ValueError:
+        return None
+
+
+def strip_price_tag(text):
+    """Remove every [[PRICE: x]] tag from text and tidy the leftover spacing.
+
+    Models often place the tag right before the closing punctuation
+    ("... market value [[PRICE: 280]]."), which would otherwise leave an
+    orphaned " ." / " ?". We drop the tag, then fix space-before-punctuation
+    and collapse doubled spaces so the cleaned utterance reads naturally.
+    """
+    if not text:
+        return text
+    out = PRICE_TAG_RE.sub("", text)
+    out = re.sub(r"\s+([.,!?;:])", r"\1", out)   # " ." -> "."
+    out = re.sub(r"\s{2,}", " ", out)             # collapse double spaces
+    return out.strip()
+
+
 def convert_list_to_str(knowledge):
     """
     function that convert a list of 3 elements to a text string
@@ -227,18 +291,16 @@ _PRICE_PATTERN = re.compile(r"\$?\d[\d,]*\.?\d*")
 
 
 def _seller_has_offered_price(state) -> bool:
-    """Return True only if the seller has made a real counter-offer DURING
-    negotiation. The game initialises dialogue_context with a fixed pair
-    [assistant: 'how much?', user: 'this is a good X and price is $N'] —
-    that opening listing is dataset boilerplate, not a real negotiated
-    offer. Treating it as one lets 'agree' at the very first agent turn
-    capitulate to the seller's listed price (sl_ratio ~ 0).
+    """Return True if the seller has stated a price anywhere in the dialogue.
 
-    We skip the first two boilerplate turns and only count a user turn as
-    "a real offer" if it appears at index >= 2 (i.e. user response AFTER
-    the agent's first negotiating move)."""
+    This INCLUDES the two opening boilerplate turns: the game initialises
+    dialogue_context with [assistant: 'how much?', user: 'this is a good X and
+    its price is $N']. That listing price counts as a seller-offered price, so
+    'agree' always has a concrete seller price to accept (the listing at the
+    very first turn, or a later counter-offer). The policy decides WHEN to
+    agree; the reward (sl_ratio) penalises agreeing at the full listing."""
     dialogue = state.get('dialogue_context', [])
-    for turn in dialogue[2:]:
+    for turn in dialogue:
         if turn.get('role') == 'user':
             content = turn.get('content', '') or ''
             if _PRICE_PATTERN.search(content):
@@ -331,6 +393,10 @@ def construct_prompt_for_chat_gpt_response_generation_negotiation(state, prompt)
                                                                state['task_background']['buyer_price'],
                                                                state['task_background']['buyer_item_description'],
                                                                goal_description)
+    # Price-tag protocol: ask the buyer to declare its price in a fixed tag so
+    # compute_reward can parse it deterministically (CLI: --use_price_tag).
+    if state.get('use_price_tag'):
+        goal_description = goal_description + PRICE_TAG_INSTRUCTION_BUYER
     return new_prompt, goal_description
 
 

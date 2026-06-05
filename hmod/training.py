@@ -12,7 +12,8 @@ from hmod.llm_reflection import LLMWeightReflector
 from hmod.objectives import BuyerObjectiveLibrary, normalize_weight
 
 
-HMOD_OBJECTIVE_ORDER = ["sl_ratio", "fairness", "deal_rate", "avg_turn"]
+# Merged into the 3-objective R-PADPP low policy (no avg_turn).
+HMOD_OBJECTIVE_ORDER = ["sl_ratio", "fairness", "deal_rate"]
 
 
 class HMODController:
@@ -109,23 +110,22 @@ class HMODController:
         objective = self.objective_library.get(self.objective_id)
         stage_id = self._stage_for_intent(intent_state)
 
+        # 3-D objective space [sl_ratio, fairness, deal_rate]; the former
+        # avg_turn urgency term is folded into deal_rate.
         if objective is not None and stage_id in objective.stage_weights:
             weight = list(objective.stage_weights[stage_id])
         elif intent_state in {"final_offer", "final_ultimatum"}:
             weight[0] -= 0.22
             weight[1] += 0.05
-            weight[2] += 0.22
-            weight[3] += 0.08
+            weight[2] += 0.30
         elif intent_state == "walkaway_risk":
             weight[0] -= 0.25
             weight[1] += 0.10
-            weight[2] += 0.20
-            weight[3] += 0.05
+            weight[2] += 0.25
         elif intent_state in {"firm", "hard_pressure"}:
             weight[0] -= 0.15
             weight[1] += 0.07
-            weight[2] += 0.13
-            weight[3] += 0.03
+            weight[2] += 0.16
 
         hints = " ".join(self.hint_manager.get_hints()[-5:]).lower()
         if "price ceiling" in hints or "above budget" in hints:

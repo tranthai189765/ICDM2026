@@ -37,20 +37,34 @@ def _direction_ok(
     after: List[float],
     expected_weight_shift: Dict[str, str],
 ) -> bool:
+    """Relaxed adaptation-direction check: no-violation + at-least-one-correct.
+
+    Counts as a correct adaptation when NO expected objective moves the OPPOSITE
+    way and AT LEAST ONE moves the correct way. A flat objective (delta == 0) is
+    allowed, so an adaptation that raises deal_rate and lowers sl_ratio but keeps
+    fairness moderate is not penalised when the gold shift also lists fairness up.
+    """
     if not expected_weight_shift:
         return True
     index = {name: i for i, name in enumerate(OBJECTIVE_ORDER)}
     checked = False
+    satisfied = 0
     for objective, direction in expected_weight_shift.items():
         if objective not in index:
             continue
         checked = True
         delta = after[index[objective]] - before[index[objective]]
-        if direction == "up" and delta <= 0:
-            return False
-        if direction == "down" and delta >= 0:
-            return False
-    return checked
+        if direction == "up":
+            if delta < 0:          # moved opposite -> violation
+                return False
+            if delta > 0:
+                satisfied += 1
+        elif direction == "down":
+            if delta > 0:          # moved opposite -> violation
+                return False
+            if delta < 0:
+                satisfied += 1
+    return checked and satisfied >= 1
 
 
 def compute_t2da(
@@ -60,6 +74,14 @@ def compute_t2da(
     expected_weight_shift: Optional[Dict[str, str]] = None,
     threshold: float = 0.25,
 ) -> Dict[str, Any]:
+    """Turns-to-drift-adaptation.
+
+    Adaptation = the first turn at/after t_drift where the local weight has moved
+    far enough from its pre-drift value (||w_t - w_pre||_1 >= threshold) AND in
+    the expected direction (relaxed: no opposite move + at least one correct, see
+    _direction_ok). The high policy is told the recommended per-intent direction
+    so it can move w_local the right way; this metric checks that it did.
+    """
     if t_drift is None:
         return {"t_drift": None, "t_adapt": None, "t2da": None, "adapted": None}
     if not weight_trace:
@@ -125,9 +147,17 @@ def aggregate_dialogue_metrics(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         for rec in records
         if rec.get("t2da", {}).get("t2da") is not None
     ]
+    # Deal-reached rate. Use the judge's `deal` verdict, not `success`: the LLM
+    # judge tends to set `success=True` (it reads it as "buyer negotiated well")
+    # even when no deal closed, which inflates the metric. `deal` is the actual
+    # agreement signal and matches GSR's deal component.
+    def _deal(rec):
+        jr = rec["judge_result"]
+        return bool(jr.get("deal", jr.get("success", False)))
+
     return {
         "num_dialogues": len(records),
-        "llm_sr": sum(float(rec["judge_result"].get("success", False)) for rec in records) / len(records),
+        "llm_sr": sum(float(_deal(rec)) for rec in records) / len(records),
         "gsr": sum(float(rec.get("gsr", 0)) for rec in records) / len(records),
         "t2da": (sum(t2da_values) / len(t2da_values)) if t2da_values else None,
         "t2da_count": len(t2da_values),

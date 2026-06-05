@@ -42,8 +42,22 @@ class LLMReflectionError(RuntimeError):
     pass
 
 
+# Model names that route through the project's own utils.prompt.call_llm
+# backends (which read FPT_API_KEY/FPT_API_URL/FPT_MODEL, etc. from .env)
+# instead of a standalone OpenAI-compatible client. Passing --llm_model fpt is
+# all that's needed; no --llm_base_url / --llm_api_key_env required.
+PROJECT_LLM_ROUTES = {"fpt", "qwen", "llama3", "chatgpt"}
+
+
 class LLMWeightReflector:
-    """OpenAI-compatible LLM client for H-MOD W_t reflection."""
+    """LLM client for H-MOD W_t reflection.
+
+    Two backends:
+      * project route (model in PROJECT_LLM_ROUTES, e.g. "fpt") → reuse
+        utils.prompt.call_llm so FPT/Qwen/Llama creds come straight from .env.
+      * generic OpenAI-compatible route (any other model name) → build an
+        openai.OpenAI client from api_key/base_url (DeepInfra, etc.).
+    """
 
     def __init__(
         self,
@@ -58,8 +72,14 @@ class LLMWeightReflector:
             model
             or os.getenv("HMOD_LLM_MODEL")
             or os.getenv("DEEPINFRA_MODEL")
+            # Default to the project FPT backend when only FPT creds are set up.
+            or ("fpt" if os.getenv("FPT_API_KEY") else None)
             or "Qwen/Qwen3-32B"
         )
+        # Decide backend from the (resolved) model name.
+        self.project_model_type = self.model.lower()
+        self.use_project_llm = self.project_model_type in PROJECT_LLM_ROUTES
+
         self.api_key_env = api_key_env
         self.api_key = api_key if api_key is not None else (
             os.getenv(api_key_env)
@@ -79,7 +99,8 @@ class LLMWeightReflector:
     def _client(self):
         if not self.api_key:
             raise LLMReflectionError(
-                "Missing LLM API key. Set DEEPINFRA_API_KEY in .env."
+                "Missing LLM API key. Set DEEPINFRA_API_KEY in .env "
+                "(or use --llm_model fpt to reuse FPT_API_KEY)."
             )
         try:
             import openai
@@ -90,6 +111,31 @@ class LLMWeightReflector:
             kwargs["base_url"] = self.base_url
         return openai.OpenAI(**kwargs)
 
+    def _complete(self, messages: List[Dict[str, str]]) -> str:
+        """Run one chat completion via the selected backend, return raw text."""
+        if self.use_project_llm:
+            # Reuse the project FPT/Qwen/Llama backends — creds come from .env
+            # (FPT_API_KEY / FPT_API_URL / FPT_MODEL, etc.). call_llm returns a
+            # list of n responses; we asked for one.
+            from utils.prompt import call_llm
+
+            out = call_llm(
+                messages,
+                n=1,
+                temperature=self.temperature,
+                max_token=self.max_tokens,
+                model_type=self.project_model_type,
+            )
+            return out[0] if isinstance(out, (list, tuple)) else out
+        client = self._client()
+        response = client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+        )
+        return response.choices[0].message.content
+
     def reflect(
         self,
         macro_goal: str,
@@ -99,6 +145,7 @@ class LLMWeightReflector:
         buyer_constraints: Dict[str, Any],
         item_context: Optional[Dict[str, Any]] = None,
         last_seller_offer: Optional[float] = None,
+        experience: Optional[str] = None,
     ) -> Dict[str, Any]:
         messages = self._build_messages(
             macro_goal=macro_goal,
@@ -108,15 +155,9 @@ class LLMWeightReflector:
             buyer_constraints=buyer_constraints,
             item_context=item_context or {},
             last_seller_offer=last_seller_offer,
+            experience=experience,
         )
-        client = self._client()
-        response = client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-        )
-        content = response.choices[0].message.content
+        content = self._complete(messages)
         parsed = parse_reflection_json(content)
         weight = coerce_reflection_weight(parsed.get("w_t"))
         return {
@@ -138,6 +179,7 @@ class LLMWeightReflector:
         buyer_constraints: Dict[str, Any],
         item_context: Dict[str, Any],
         last_seller_offer: Optional[float],
+        experience: Optional[str] = None,
     ) -> List[Dict[str, str]]:
         objective_text = "\n".join(
             f"- {name}: {OBJECTIVE_DESCRIPTIONS[name]}" for name in OBJECTIVE_ORDER
@@ -167,6 +209,7 @@ class LLMWeightReflector:
             ),
             "current_turn": turn,
             "previous_w": previous,
+            "accumulated_experience": experience or "none yet",
             "buyer_constraints": buyer_constraints,
             "last_seller_offer": last_seller_offer,
             "item_context": item_context,
@@ -181,14 +224,14 @@ class LLMWeightReflector:
                 "w_t": {
                     "sl_ratio": "non-negative number",
                     "fairness": "non-negative number",
-                    "deal_rate": "non-negative number",
-                    "avg_turn": "non-negative number"
+                    "deal_rate": "non-negative number"
                 },
                 "reason": "brief explanation",
             },
             "output_instruction": (
-                "Return only valid JSON. W_t must contain all four keys and should sum to 1. "
-                "Use higher sl_ratio for price saving, higher deal_rate/avg_turn for closing urgency, "
+                "Return only valid JSON. W_t must contain exactly the three keys "
+                "sl_ratio, fairness, deal_rate and should sum to 1. "
+                "Use higher sl_ratio for price saving, higher deal_rate for closing urgency, "
                 "and higher fairness for relationship/fairness recovery."
             ),
         }
@@ -222,6 +265,6 @@ def coerce_reflection_weight(raw_weight: Any) -> List[float]:
         weight = [float(x) for x in raw_weight]
     else:
         raise LLMReflectionError("LLM reflection JSON missing w_t")
-    if len(weight) != len(OBJECTIVE_ORDER):
-        raise LLMReflectionError(f"w_t must have {len(OBJECTIVE_ORDER)} values")
+    # normalize_weight collapses any legacy 4-D vector to the active 3-D space,
+    # so a model that still emits an avg_turn term is tolerated.
     return normalize_weight(weight)

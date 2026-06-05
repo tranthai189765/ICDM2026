@@ -5,6 +5,8 @@ import os
 import time
 from typing import Any, Dict, List, Optional
 
+from loguru import logger
+
 from hmod.judge import judge_deal
 from hmod.llm_reflection import LLMWeightReflector
 from hmod.metrics import aggregate_dialogue_metrics, compute_cvr, compute_gsr, compute_t2da, subgroup_metrics
@@ -106,6 +108,12 @@ class HMODEvaluator:
         llm_temperature: float = 0.0,
         llm_max_tokens: int = 500,
         llm_fallback_to_rule: bool = False,
+        buyer_policy: Optional[Any] = None,
+        experience_buffer: Optional[Any] = None,
+        verbose: bool = False,
+        turn_limit_mult: float = 1.0,
+        hint_provider: Optional[Any] = None,
+        meta_controller: Optional[Any] = None,
     ):
         if mode not in {"padpp_static", "hmod_dynamic", "hmod_no_mask"}:
             raise ValueError("mode must be one of padpp_static, hmod_dynamic, hmod_no_mask")
@@ -116,6 +124,8 @@ class HMODEvaluator:
         self.mode = mode
         self.controller_mode = controller_mode
         self.judge_model = judge_model
+        self.verbose = verbose
+        self.turn_limit_mult = max(0.1, float(turn_limit_mult))
         self.use_llm_simulator = use_llm_simulator
         self.audit_sample_size = audit_sample_size
         self.objective_file = objective_file
@@ -129,7 +139,11 @@ class HMODEvaluator:
             objective_id=objective_id,
             reflection_horizon=reflection_horizon,
         )
-        if controller_mode == "llm_reflection" and mode != "padpp_static":
+        if meta_controller is not None:
+            # Pre-built controller injected by a caller (e.g. the two-agent
+            # trainer/eval). It manages its own LLM agents and hints.
+            self.meta_controller = meta_controller
+        elif controller_mode == "llm_reflection" and mode != "padpp_static":
             reflector = LLMWeightReflector(
                 model=llm_model,
                 api_key=llm_api_key,
@@ -146,7 +160,38 @@ class HMODEvaluator:
             )
         else:
             self.meta_controller = rule_controller
-        self.buyer_policy = RuleBuyerPolicy()
+        # buyer_policy can be the rule scaffold (default) or a NeuralBuyerPolicy
+        # backed by the trained R-PADPP low policy (merged-pipeline path).
+        self.buyer_policy = buyer_policy if buyer_policy is not None else RuleBuyerPolicy()
+
+        # Grounding for the LLM reflection: general hints (from H-MOD hint
+        # training) + per-(goal, drift) experience summary. Both feed the same
+        # `experience_provider` slot, composed into one block.
+        self.experience_buffer = experience_buffer
+        self.hint_provider = hint_provider
+        if isinstance(self.meta_controller, LLMReflectionMetaController):
+            providers = []
+            if hint_provider is not None:
+                providers.append(hint_provider)
+            if experience_buffer is not None:
+                providers.append(
+                    lambda macro_goal, drift_mode: (
+                        (experience_buffer.summarize(macro_goal, drift_mode) or {}).get("text")
+                    )
+                )
+            if providers:
+                def _combined(macro_goal, drift_mode, _providers=providers):
+                    parts = []
+                    for prov in _providers:
+                        try:
+                            text = prov(macro_goal, drift_mode)
+                        except Exception:
+                            text = None
+                        if text:
+                            parts.append(text)
+                    return "\n\n".join(parts) if parts else None
+
+                self.meta_controller.experience_provider = _combined
 
     def run_dialogue(self, scenario: HMODScenario) -> Dict[str, Any]:
         simulator = DynamicSellerNegotiationSimulator(
@@ -159,7 +204,21 @@ class HMODEvaluator:
         violation_trace: List[Dict[str, Any]] = []
         current_weight: Optional[List[float]] = None
 
-        for turn in range(scenario.turn_limit):
+        # Effective turn limit (e.g. --turn_limit_mult 3 triples the dialogue
+        # length). Used for the loop AND the metrics so they stay consistent.
+        effective_turn_limit = max(1, int(round(scenario.turn_limit * self.turn_limit_mult)))
+
+        if self.verbose:
+            logger.info(
+                f"===== Dialogue {scenario.id} | drift={scenario.drift_mode} | "
+                f"macro_goal='{scenario.macro_goal}' | turn_limit={effective_turn_limit} ====="
+            )
+            logger.info(
+                f"  [item] {scenario.case.get('item_name')} | buyer_target≈${scenario.target_price():.0f} "
+                f"| buyer_ceiling≈${scenario.max_acceptable_price():.0f} | seller_list=${scenario.case.get('seller_price')}"
+            )
+
+        for turn in range(effective_turn_limit):
             state["turn_id"] = turn
             selected = self.meta_controller.select_local_weight(
                 scenario=scenario,
@@ -222,6 +281,21 @@ class HMODEvaluator:
             seller_response = simulator.respond(state)
             state["dialogue_context"].append({"role": "user", "content": seller_response})
             state["last_seller_price"] = first_price(seller_response)
+
+            if self.verbose:
+                wt = [round(float(x), 2) for x in current_weight]
+                reflected = "REFLECT" if selected.get("reflection_step") else "carry"
+                sim_intent = simulator.get_trace().get("intent_state_by_turn", [])
+                cur_intent = (sim_intent[-1].get("intent_state")
+                              if sim_intent else selected.get("intent_state"))
+                logger.info(
+                    f"[turn {turn}] seller_intent={cur_intent} | w_t={wt} ({reflected}) | "
+                    f"act={decision['action'].get('strategy')}"
+                    + ("  [MASKED: over-ceiling]" if decision.get("blocked_violation") else "")
+                )
+                logger.info(f"   [Buyer]:  {decision['buyer_response']}")
+                logger.info(f"   [Seller]: {seller_response}")
+
             if _is_terminal(state["dialogue_context"]):
                 break
 
@@ -232,7 +306,7 @@ class HMODEvaluator:
             judge_result=judge_result,
             min_acceptable_price=max_price,
             turn_count=turn_count,
-            turn_limit=scenario.turn_limit,
+            turn_limit=effective_turn_limit,
             price_direction="at_most",
         )
         if judge_result.get("deal_price") is not None and float(judge_result["deal_price"]) > max_price:
@@ -254,10 +328,36 @@ class HMODEvaluator:
         t2da = compute_t2da(
             weight_trace=weight_trace,
             t_drift=sim_trace.get("t_drift"),
-            turn_limit=scenario.turn_limit,
+            turn_limit=effective_turn_limit,
             expected_weight_shift=scenario.expected_weight_shift,
         )
         cvr = compute_cvr(violation_trace)
+
+        if self.verbose:
+            logger.info(
+                f"===== Result {scenario.id}: deal={judge_result.get('deal')} "
+                f"deal_price={judge_result.get('deal_price')} | GSR={gsr} "
+                f"T2DA={t2da} CVR={cvr} | turns={turn_count} =====\n"
+            )
+
+        # Record this episode for cross-episode experience accumulation.
+        if self.experience_buffer is not None:
+            final_w = weight_trace[-1]["weight_vector"] if weight_trace else None
+            intent_states = [w.get("intent_state") for w in weight_trace]
+            try:
+                self.experience_buffer.record_episode(
+                    macro_goal=scenario.macro_goal,
+                    drift_mode=scenario.drift_mode,
+                    final_weight=final_w or [],
+                    gsr=float(gsr),
+                    deal=bool(judge_result.get("deal")),
+                    deal_price=judge_result.get("deal_price"),
+                    max_acceptable_price=max_price,
+                    intent_states=intent_states,
+                )
+            except Exception:
+                pass
+
         return {
             "scenario_id": scenario.id,
             "mode": self.mode,
@@ -282,8 +382,20 @@ class HMODEvaluator:
             "violation_trace": violation_trace,
         }
 
-    def run(self, scenarios: List[HMODScenario]) -> Dict[str, Any]:
-        dialogues = [self.run_dialogue(scenario) for scenario in scenarios]
+    def run(self, scenarios: List[HMODScenario],
+            progress_prefix: Optional[str] = None) -> Dict[str, Any]:
+        dialogues = []
+        n = len(scenarios)
+        for i, scenario in enumerate(scenarios):
+            rec = self.run_dialogue(scenario)
+            dialogues.append(rec)
+            if progress_prefix is not None:
+                logger.info(
+                    f"[{progress_prefix}] {i + 1}/{n} {rec['scenario_id']}: "
+                    f"deal={rec['judge_result'].get('deal')} GSR={rec['gsr']} "
+                    f"t2da={(rec.get('t2da') or {}).get('t2da')} "
+                    f"turns={rec['gsr_components']['turn_count']}"
+                )
         return {
             "mode": self.mode,
             "controller_mode": self.controller_mode,
@@ -318,6 +430,12 @@ def run_and_write(
     llm_temperature: float = 0.0,
     llm_max_tokens: int = 500,
     llm_fallback_to_rule: bool = False,
+    buyer_policy: Optional[Any] = None,
+    experience_buffer: Optional[Any] = None,
+    verbose: bool = False,
+    turn_limit_mult: float = 1.0,
+    hint_provider: Optional[Any] = None,
+    meta_controller: Optional[Any] = None,
 ) -> Dict[str, Any]:
     scenarios = load_scenarios(scenario_file, limit=num_cases)
     run_id = f"{mode}_{time.strftime('%Y%m%d_%H%M%S')}"
@@ -340,6 +458,12 @@ def run_and_write(
         llm_temperature=llm_temperature,
         llm_max_tokens=llm_max_tokens,
         llm_fallback_to_rule=llm_fallback_to_rule,
+        buyer_policy=buyer_policy,
+        experience_buffer=experience_buffer,
+        verbose=verbose,
+        turn_limit_mult=turn_limit_mult,
+        hint_provider=hint_provider,
+        meta_controller=meta_controller,
     )
     result = evaluator.run(scenarios)
 

@@ -8,8 +8,16 @@ from loguru import logger
 from config.constants import DURECDIAL, INSPIRED, CRAIGSLIST_BARGAIN, ES_CONV
 from utils.prompt import get_llm_based_assessment_for_recommendation, get_llm_based_assessment_for_negotiation, \
     get_llm_based_assessment_for_emotional_support, get_toxicity_assessment_for_emotional_support, \
-    get_user_sentiment_for_item_recommendation
+    get_user_sentiment_for_item_recommendation, get_llm_based_price_extraction_for_negotiation
 from config.constants import SUCCESS_RATE, DEAL_RATE, ITEM_FREQ, AVG_TURN, SL_RATIO, FAIRNESS, TOXICITY, USER_REWARD
+
+
+# Only these buyer strategies actually COMMIT to a price. Numbers that appear
+# in any other utterance (deny, disagree, inquire, ...) are referential — e.g.
+# the agent restating its budget while denying — and must NOT be credited as a
+# secured price, otherwise a 'deny' that echoes the buyer target yields a bogus
+# sl_ratio of 1.0 and the policy learns to spam 'deny'.
+NEG_PRICE_COMMITTING = {'propose', 'counter', 'final_offer', 'agree'}
 
 
 class Game(ABC):
@@ -373,8 +381,22 @@ class NegotiationGame(Game):
             "goal": goal,  # will not affect anything, only including it for coding convenience
             "response": "",  # will not affect anything, only including it for coding convenience
             "pre_goals": [''],
-            "pre_topics": ['']
+            "pre_topics": [''],
+            # Price-tag protocol flag (CLI: --use_price_tag). Read by the buyer
+            # generation prompt and the seller simulator to append a price tag.
+            "use_price_tag": getattr(self.game_config, 'use_price_tag', False),
+            # Latest declared prices parsed from the price tags (filled in step()).
+            "_buyer_declared_price": None,
+            "_seller_declared_price": None,
         }
+
+        # Log the two opening boilerplate turns (buyer greeting + seller listing)
+        # so the conversation log shows the FULL dialogue, not just from the
+        # first negotiated turn onward.
+        logger.info("===== New dialogue =====")
+        logger.info(f"[System]: {dialogue_context[0]['content']}")
+        logger.info(f"[USER]: {dialogue_context[1]['content']}")
+
         return state
 
     def step(self, state, action, generation_model, simulator):
@@ -395,11 +417,33 @@ class NegotiationGame(Game):
         # generate the system response
         system_response = generation_model.generate_response(state)
 
+        # Price-tag protocol: parse the buyer's declared price from the tag and
+        # strip the tag before the utterance is stored / shown to the seller.
+        # (No-op outside negotiation, where state has no 'use_price_tag' key.)
+        # Only credit the price when the action actually COMMITS to one — a
+        # 'deny'/'inquire' that echoes the buyer's budget is referential, not a
+        # secured price, so it must not overwrite the anchor (anti reward-hack).
+        if state.get('use_price_tag'):
+            from utils.generation import extract_price_tag, strip_price_tag
+            _strategy_now = action[0] if isinstance(action, tuple) else action
+            _buyer_price = extract_price_tag(system_response)
+            if _buyer_price is not None and _strategy_now in NEG_PRICE_COMMITTING:
+                state['_buyer_declared_price'] = _buyer_price
+            system_response = strip_price_tag(system_response)
+
         # update the dialogue context
         state['dialogue_context'].append({"role": "assistant", "content": system_response})
 
         # generate user response with LLM
         user_response = simulator.respond(state)
+
+        # Price-tag protocol: parse the seller's declared price and strip tag.
+        if state.get('use_price_tag'):
+            from utils.generation import extract_price_tag, strip_price_tag
+            _seller_price = extract_price_tag(user_response)
+            if _seller_price is not None:
+                state['_seller_declared_price'] = _seller_price
+            user_response = strip_price_tag(user_response)
 
         # construct the new state
         # prepend the system and user reponse to the dialogue context
@@ -432,6 +476,12 @@ class NegotiationGame(Game):
         goal = action
         # compute the llm-basd assessment
         t = time.time()
+        # NLI deal judge at temperature=1.1 to match PADPP-original exactly: the
+        # n=10 diverse judges form a SOFT deal probability (neg_sr = fraction
+        # agreeing). This ensemble soft-labelling is the paper's intended
+        # reward design, not noise — a deterministic single judgment loses the
+        # graded signal and (with FPT's residual non-determinism) wasn't even
+        # truly binary.
         responses = get_llm_based_assessment_for_negotiation(simulated_conversation=state['dialogue_context'],
                                                              n=self.game_config.n,
                                                              temperature=1.1,
@@ -469,7 +519,9 @@ class NegotiationGame(Game):
                 rewards.append(reward)
 
         # deal rate
-        neg_sr = sum(deals) / len(deals)
+        # Guard against an all-ambiguous judge batch (no response contained
+        # 'have not'/'have reached'); previously this raised ZeroDivisionError.
+        neg_sr = sum(deals) / len(deals) if len(deals) > 0 else 0.0
         # # computing the negotiation success rate and fairness score
         # if neg_sr < self.game_config.epsilon:
         #     sl_ratio = 0.0
@@ -487,6 +539,33 @@ class NegotiationGame(Game):
         # Resolve action strategy for non-tuple actions.
         _strategy = action[0] if isinstance(action, tuple) else action
 
+        _seller_p = float(state['task_background']['seller_price'])
+        _buyer_p = float(state['task_background']['buyer_price'])
+
+        # BUGFIX (#1): the agent is the BUYER, who wants a LOW price, yet the
+        # old code did `max(system_prices)`. When the utterance mentioned both
+        # the agent's offer and the seller's ask (e.g. "I'll pay $200, not your
+        # $500"), max() picked the SELLER's $500 and zeroed out the agent's
+        # gain — a strong wrong-direction reward signal. Worse, stray numbers
+        # (model years like 2007, quantities, etc.) leaked in and produced
+        # nonsense prices. We now (a) filter to PLAUSIBLE prices inside a band
+        # around the buyer/seller range, then (b) pick the LOWEST plausible
+        # one — the buyer's actual offer.
+        def _pick_buyer_price(price_strs):
+            lo = min(_seller_p, _buyer_p) * 0.5
+            hi = max(_seller_p, _buyer_p) * 1.5
+            plausible = []
+            for p in price_strs:
+                try:
+                    val = float(p)
+                except ValueError:
+                    continue
+                if lo <= val <= hi:
+                    plausible.append(val)
+            if not plausible:
+                return None
+            return min(plausible)
+
         # Only PRICE-COMMITTING actions credit the current utterance's price
         # as the system anchor. For all other actions, the number that
         # appears in the utterance is REFERENTIAL (e.g. agent says
@@ -494,7 +573,7 @@ class NegotiationGame(Game):
         # NOT a new commitment). Crediting referential numbers destroys the
         # r_gain measurement by ~0.2 on average. For non-committing actions
         # we always fall back to the agent's MOST RECENT real anchor.
-        _PRICE_COMMITTING = {'propose', 'counter', 'final_offer', 'agree'}
+        _PRICE_COMMITTING = NEG_PRICE_COMMITTING
 
         def _scan_prior_anchor():
             for prev_turn in reversed(state['dialogue_context'][:-2]):
@@ -503,21 +582,74 @@ class NegotiationGame(Game):
                         r"[-+]?\d*\.?\d+",
                         (prev_turn.get('content') or '').replace(",", "")
                     )
-                    if prev_prices:
-                        return max(prev_prices)
+                    picked = _pick_buyer_price(prev_prices)
+                    if picked is not None:
+                        return picked
             return None
 
-        if _strategy in _PRICE_COMMITTING and len(system_prices) > 0:
-            # Real commitment: trust the current utterance's price.
-            system_price = max(system_prices)
+        # Optional LLM-based price extraction (CLI: --use_llm_price_extraction).
+        # The agent is the Buyer; when an utterance has several numbers the
+        # regex heuristic can pick the wrong one. If enabled, ask the LLM to
+        # extract the buyer's committed price for PRICE-COMMITTING actions and
+        # use it when it returns a plausible value. Falls back to the heuristic
+        # below on None/implausible output so a flaky LLM never breaks training.
+        llm_price = None
+        if getattr(self.game_config, 'use_llm_price_extraction', False) \
+                and _strategy in _PRICE_COMMITTING:
+            try:
+                llm_price = get_llm_based_price_extraction_for_negotiation(
+                    buyer_utterance=system_response,
+                    seller_price=_seller_p,
+                    buyer_price=_buyer_p,
+                    temperature=0.0,
+                    model_type=self.model_type,
+                )
+            except Exception as e:
+                logger.warning(f"[LLM price extraction] failed: {e}")
+                llm_price = None
+            if llm_price is not None:
+                lo = min(_seller_p, _buyer_p) * 0.5
+                hi = max(_seller_p, _buyer_p) * 1.5
+                if not (lo <= llm_price <= hi):
+                    llm_price = None   # reject implausible LLM output
+
+        # Price-tag protocol (CLI: --use_price_tag): the buyer declared its
+        # current price via a machine tag parsed in step(). _buyer_declared_price
+        # holds the MOST RECENT declared buyer price (it persists across turns
+        # where the buyer named no price, acting as the prior anchor). This is
+        # the most reliable source, so it takes priority.
+        tag_price = None
+        if state.get('use_price_tag'):
+            tag_price = state.get('_buyer_declared_price')
+            if tag_price is not None:
+                lo = min(_seller_p, _buyer_p) * 0.5
+                hi = max(_seller_p, _buyer_p) * 1.5
+                if not (lo <= tag_price <= hi):
+                    tag_price = None
+
+        committed_price = _pick_buyer_price(system_prices)
+        if state.get('use_price_tag'):
+            # Tag mode is authoritative and leak-free: _buyer_declared_price
+            # only ever holds prices from PRICE-COMMITTING turns (gated in
+            # step()). If the buyer has never committed a price yet, no gain is
+            # secured → fall straight back to the seller's listing (sl_ratio=0).
+            # We deliberately do NOT scan prior utterance text here, because a
+            # 'deny' that echoes the buyer's budget would otherwise leak in.
+            system_price = tag_price if tag_price is not None else _seller_p
+        elif llm_price is not None:
+            # Trust the LLM-extracted buyer commitment.
+            system_price = llm_price
+        elif _strategy in _PRICE_COMMITTING and committed_price is not None:
+            # Real commitment: trust the current utterance's (plausible) offer.
+            system_price = committed_price
         else:
             # Non-committing action (deny, disagree, inquire, walk_away,
             # inform, affirm, greet, confirm, counter-noprice) OR price-
-            # committing action with no extractable price (LLM forgot the
-            # number). Use the most recent real anchor.
+            # committing action with no extractable plausible price. Use the
+            # most recent real anchor.
             system_price = _scan_prior_anchor()
             if system_price is None:
-                system_price = state['task_background']['seller_price']
+                system_price = _seller_p
 
         system_price = float(system_price)
 
@@ -526,8 +658,7 @@ class NegotiationGame(Game):
         # an annotation artifact). In those cases the standard sl_ratio formula
         # produces nonsensical values and a few outlier episodes drag down the
         # average r_gain by 0.05-0.10. Treat them as a neutral outcome.
-        _seller_p = float(state['task_background']['seller_price'])
-        _buyer_p = float(state['task_background']['buyer_price'])
+        # (_seller_p / _buyer_p are defined above, near the price extraction.)
         # ALSO clamp the case where the LLM hallucinated a price ABOVE the
         # seller's listing (e.g. counter,2 prompted to say bin 2 price = $220
         # but LLM echoed seller's $580 instead). Without the clamp this gives
@@ -593,9 +724,20 @@ class NegotiationGame(Game):
         #     else:
         #         fairness_score = 1.0
 
+        # BUGFIX (#4): walk_away is an explicit decision to abandon the deal,
+        # but previously it left done=0 (NLI said "have not"), forcing the
+        # agent to keep talking after it had quit. Make walk_away a hard
+        # FAILURE terminal and zero out price/deal rewards (no commitment was
+        # made). This removes wasted post-quit turns and their noisy rewards.
+        if _strategy == 'walk_away':
+            logger.info('--> Agent walked away (hard terminal).')
+            sl_ratio = 0.0
+            fairness = 0.0
+            neg_sr = 0.0
+            done = -1
         # checking if there is a deal
         # that mean the neg_sr should be greater than a predefined threshold
-        if neg_sr >= self.game_config.epsilon:
+        elif neg_sr >= self.game_config.epsilon:
             logger.info('--> Terminated conversation !')
             done = 1
         # other cases
@@ -610,32 +752,39 @@ class NegotiationGame(Game):
                 # logger.info('The conversation is on-going !')
                 pass
 
-        # vector-valued reward function
-        # sl_ratio / fairness are attenuated except at SUCCESSFUL terminal
-        # (done == 1). Both intermediate (done == 0) and timeout-failure
-        # (done == -1) get the small signal, so the agent cannot reward-hack
-        # by anchoring at a buyer-favorable price without closing a deal.
-        # 0.3 chosen as sweet spot: strong enough TD signal for the anchor
-        # strategy to dominate capitulation (0.1 made the gap too small and
-        # skills collapsed to 1-turn deals), but small enough that "refuse
-        # forever" doesn't beat actually closing a deal.
-        shaping = 1.0 if done == 1 else 0.3
+        # Fairness range-imbalance correction (CLI: --fairness_train_scale).
+        # r_gain and r_deal saturate at 1.0 but the fairness formula caps at
+        # 0.5, so under a balanced weight the scalarised return under-weights
+        # fairness and the policy drifts to gain/deal. Scaling fairness up
+        # during TRAINING (e.g. x2 -> max 1.0) restores parity; eval keeps the
+        # default scale 1.0 so the reported r_fair stays comparable to the
+        # PADPP paper (max 0.5).
+        fairness = fairness * getattr(self.game_config, 'fairness_train_scale', 1.0)
 
+        # Turn penalty (CLI: --turn_penalty), applied to the DEAL component only.
+        # Without an avg_turn objective the 3-D reward has no closing pressure,
+        # so under the MEAN convention deal-caring skills procrastinate. We add
+        # the penalty to neg_sr (the deal reward): for a simplex preference w,
+        # w·[gain, fair, deal - c] = w·r - w_deal·c, i.e. a per-turn penalty
+        # PROPORTIONAL to how much the skill cares about closing. This pushes
+        # Deal/Uniform to close early while leaving a pure-Fairness or pure-Gain
+        # skill (w_deal = 0) free to hold at the midpoint / lowball — which is
+        # the behaviour that maximises their own objective. Training only;
+        # eval keeps c=0 so reported metrics stay clean.
+        c = getattr(self.game_config, 'turn_penalty', 0.0)
+        if c:
+            neg_sr = neg_sr - c
+
+        # PADPP-original reward vector (3 dimensions): [sl_ratio, fairness, neg_sr].
         reward = []
-
-        # sale-list ratio
         if SL_RATIO in self.game_config.objectives:
-            reward.append(shaping * sl_ratio)
-        # fairness
+            reward.append(sl_ratio)
         if FAIRNESS in self.game_config.objectives:
-            reward.append(shaping * fairness)
-        # SR / deal_rate (YAML uses "deal_rate"; constants has both "sr" and "deal_rate")
+            reward.append(fairness)
         if SUCCESS_RATE in self.game_config.objectives or DEAL_RATE in self.game_config.objectives:
             reward.append(neg_sr)
-        # avg_turn: constant -0.1 per turn, NOT subject to shaping.
-        # Encourages closing deals quickly (fewer turns = smaller cumulative penalty).
         if AVG_TURN in self.game_config.objectives:
-            reward.append(turn_reward)   # turn_reward = -0.1 defined above
+            reward.append(turn_reward)
 
         logger.debug(f"reward={reward} done={done}")
         return reward, done, done
@@ -718,11 +867,33 @@ class EmotionalSupportGame(Game):
         # generate the system response
         system_response = generation_model.generate_response(state)
 
+        # Price-tag protocol: parse the buyer's declared price from the tag and
+        # strip the tag before the utterance is stored / shown to the seller.
+        # (No-op outside negotiation, where state has no 'use_price_tag' key.)
+        # Only credit the price when the action actually COMMITS to one — a
+        # 'deny'/'inquire' that echoes the buyer's budget is referential, not a
+        # secured price, so it must not overwrite the anchor (anti reward-hack).
+        if state.get('use_price_tag'):
+            from utils.generation import extract_price_tag, strip_price_tag
+            _strategy_now = action[0] if isinstance(action, tuple) else action
+            _buyer_price = extract_price_tag(system_response)
+            if _buyer_price is not None and _strategy_now in NEG_PRICE_COMMITTING:
+                state['_buyer_declared_price'] = _buyer_price
+            system_response = strip_price_tag(system_response)
+
         # update the dialogue context
         state['dialogue_context'].append({"role": "assistant", "content": system_response})
 
         # generate user response with LLM
         user_response = simulator.respond(state)
+
+        # Price-tag protocol: parse the seller's declared price and strip tag.
+        if state.get('use_price_tag'):
+            from utils.generation import extract_price_tag, strip_price_tag
+            _seller_price = extract_price_tag(user_response)
+            if _seller_price is not None:
+                state['_seller_declared_price'] = _seller_price
+            user_response = strip_price_tag(user_response)
 
         # construct the new state
         # prepend the system and user reponse to the dialogue context

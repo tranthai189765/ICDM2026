@@ -26,28 +26,34 @@ from logger.file_logger import FileLogger
 from utils.game import save_conversation_for_human_evaluation
 
 
-# Strategies that take a price bin (topic_idx 0..4). All other strategies
-# behave identically across topic_idx, so we mask them to topic 0 only.
-_PRICE_BEARING_STRATEGIES = {'propose', 'counter', 'final_offer'}
+# Only these strategies USE the price bin in response generation (the generated
+# utterance changes with the bin). For every other strategy the bin is ignored,
+# so (strategy, bin>0) produces the exact same utterance and reward as
+# (strategy, 0) — a pure duplicate. _build_action_mask keeps only the 19
+# distinct actions (propose/counter x 5 bins + 9 other strategies at bin 0).
+# Single source of truth in config.constants (shared with the SFT data
+# processor so labels and the action mask stay consistent).
+from config.constants import PRICE_BEARING_STRATEGIES as _PRICE_BEARING_STRATEGIES
 
 
 def _build_action_mask(action_mapping, n_actions, device):
-    """Return a 1-D bool mask over the flat action space. True = valid.
+    """Return a 1-D bool mask over the flat action space (True = selectable).
 
-    Effective action space (25 actions, was 65 raw slots):
-      - propose, counter, final_offer  x 5 price bins
-      - agree, disagree, counter-noprice, walk_away, inquire, inform,
-        greet, deny, affirm, confirm   x topic 0 only
+    Masks out bin-redundant duplicates: non-price strategies at bin > 0 are
+    identical to their bin-0 form, so only bin 0 is kept for them; price-bearing
+    strategies keep all bins.
     """
     if isinstance(action_mapping, tuple):
         action_mapping = action_mapping[0]
     mask = torch.zeros(n_actions, device=device, dtype=torch.bool)
-    for (strategy, topic), idx in action_mapping.items():
+    for (strategy, bin_idx), idx in action_mapping.items():
         if idx >= n_actions:
             continue
-        if strategy in _PRICE_BEARING_STRATEGIES or topic == 0:
+        if strategy in _PRICE_BEARING_STRATEGIES or bin_idx == 0:
             mask[idx] = True
     return mask
+
+
 from utils.game import random_weights
 
 from collections import deque
@@ -326,8 +332,30 @@ class PADPPTrainer(Trainer):
         lr_scheduler = self.create_scheduler(
             optimizer, self.model_config.num_warmup_steps, max_train_steps)
 
-        # create the loss function
-        self.criterion = self.create_criterion()
+        # create the loss function. Optionally class-balanced: the raw goal
+        # distribution is dominated by counter/inquire/greet while agree (and
+        # disagree/deny) are minorities, so a plain cross-entropy biases the SFT
+        # policy away from agree. When sft_class_balanced is set we weight each
+        # action by inverse-sqrt strategy frequency so the model learns to agree.
+        if getattr(self.model_config, 'sft_class_balanced', False):
+            from collections import Counter
+            goal_counts = Counter(inst['goal'] for inst in train_instances)
+            n_classes = len(action_mapping)
+            weights = torch.ones(n_classes)
+            total = float(sum(goal_counts.values()))
+            n_goals = max(len(goal_counts), 1)
+            for key, aid in action_mapping.items():
+                goal = key[0] if isinstance(key, tuple) else key
+                c = goal_counts.get(goal, 0)
+                if c > 0 and aid < n_classes:
+                    weights[aid] = (total / (n_goals * c)) ** 0.5
+            self.criterion = torch.nn.CrossEntropyLoss(weight=weights.to(self.device))
+            loguru_logger.info(
+                f"[SFT] class-balanced loss enabled: weight range "
+                f"[{float(weights.min()):.2f}, {float(weights.max()):.2f}]"
+            )
+        else:
+            self.criterion = self.create_criterion()
 
         # progress bar
         self.progress_bar = tqdm(
@@ -541,6 +569,15 @@ class PADPPTrainer(Trainer):
                          Q_next).sum(dim=-1).view(-1, action_size)
 
                     scalarized_scores = scalarized_scores * cosim
+                    # Respect the action mask when picking the TD-target action,
+                    # otherwise the bootstrap could select a bin-redundant action
+                    # whose Q is never trained (never rolled out) and therefore
+                    # arbitrary. Keeps the target consistent with rollout/argmax.
+                    if getattr(self.model_config, 'mask_redundant_actions', True):
+                        _amask = _build_action_mask(
+                            action_mapping, action_size, scalarized_scores.device)
+                        scalarized_scores = scalarized_scores.masked_fill(
+                            ~_amask.unsqueeze(0), float('-inf'))
                     # get the action-value function of the best action.
                     idx = scalarized_scores.max(1)[1]
                     Q_next_target = Q_next.gather(1, idx.view(-1, 1, 1).expand(idx.size(0),
@@ -602,11 +639,26 @@ class PADPPTrainer(Trainer):
                         torch.bmm(repeated_sample_preference.unsqueeze(1), tmp_Q_prime.unsqueeze(2)).view(-1,
                                                                                                           action_size)
                     # convex envelope Q ids
+                    # Mask bin-redundant actions before the argmax (same reason
+                    # as the PI branch: avoid bootstrapping from untrained
+                    # duplicate-action Q values). Mask the FINAL score so the
+                    # masked entries are -inf (never selected); masking the two
+                    # factors separately could give -inf * -inf = +inf.
+                    _use_mask = getattr(self.model_config, 'mask_redundant_actions', True)
+                    if _use_mask:
+                        _amask = _build_action_mask(
+                            action_mapping, action_size, scalarized_scores.device)
                     if self.game_config.name == NEGOTIATION:
-                        idx = (co_sim * scalarized_scores).max(1)[1]
+                        gpi_score = co_sim * scalarized_scores
+                        if _use_mask:
+                            gpi_score = gpi_score.masked_fill(~_amask.unsqueeze(0), float('-inf'))
+                        idx = gpi_score.max(1)[1]
 
                     elif self.game_config.name == RECOMMENDATION:
-                        idx = scalarized_scores.max(1)[1]
+                        gpi_score = scalarized_scores
+                        if _use_mask:
+                            gpi_score = gpi_score.masked_fill(~_amask.unsqueeze(0), float('-inf'))
+                        idx = gpi_score.max(1)[1]
 
                     # Bs, n_sample, n_sample, 2 x Bs, n_sample, n_sample, n_action, 2
                     # scalarized_Q_prime = torch.matmul(repeated_sample_preference, Q_prime.permute(0, 1, 3))
@@ -996,35 +1048,54 @@ class PADPPTrainer(Trainer):
                     logits = torch.bmm(logits, w_gpi.permute(0, 2, 1))
                     logits = logits.max(dim=0)[0]
                     logits = logits.permute(1, 0)
-                    # mask redundant actions in the GPI path too
-                    action_mask = _build_action_mask(
-                        action_mapping, logits.size(-1), logits.device)
-                    logits = logits.masked_fill(~action_mask.unsqueeze(-1), float('-inf'))
-                    # computing the q value and next q values
                 # Inference
                 else:
                     logits = torch.bmm(logits, batch['w'].unsqueeze(
                         1).permute(0, 2, 1)).squeeze(-1)
                     loguru_logger.debug(f"w={batch['w']} logits={logits}")
 
-                # Mask out semantically-redundant actions (non-price strategies
-                # at topic_idx > 0 collapse to the same generated utterance).
-                action_mask = _build_action_mask(
-                    action_mapping, logits.size(-1), logits.device)
-                logits = logits.masked_fill(~action_mask, float('-inf'))
+                # Mask bin-redundant duplicate actions (non-price strategies at
+                # bin > 0 produce the same utterance/reward as bin 0). Keeps the
+                # 19 distinct actions. Toggle with model_config.mask_redundant_actions.
+                if getattr(self.model_config, 'mask_redundant_actions', True):
+                    action_mask = _build_action_mask(
+                        action_mapping, logits.size(-1), logits.device)
+                    logits = logits.masked_fill(~action_mask, float('-inf'))
 
-                action, log_prob = self.select_action(logits, is_test=is_test)
+                # Deal-weighted agree exploration (CLI: --agree_explore_bias).
+                # During epsilon exploration, steer the random action toward
+                # ('agree', 0) with probability = the deal-rate weight w_deal, so
+                # deal-caring skills (w=[0,0,1] -> 100%) try agree far more than
+                # uniform random, while gain/fair skills (w_deal=0) never do.
+                agree_action_id, agree_prob = None, 0.0
+                if (not is_test
+                        and getattr(self.model_config, 'agree_explore_bias', False)):
+                    _amap = action_mapping[0] if isinstance(action_mapping, tuple) else action_mapping
+                    agree_action_id = _amap.get(('agree', 0))
+                    try:
+                        wv = w.detach().cpu().numpy().reshape(-1)
+                        agree_prob = float(wv[-1])  # deal_rate is the last objective
+                    except Exception:
+                        agree_prob = 0.0
+
+                action, log_prob = self.select_action(
+                    logits, is_test=is_test,
+                    agree_action_id=agree_action_id, agree_prob=agree_prob)
                 action = inverse_action_mapping[action]
                 loguru_logger.debug(f"action={action} log_prob={log_prob}")
 
         # return action and log prob
         return action, log_prob, reward
 
-    def select_action(self, logits, is_test=True, eps=0.1):
+    def select_action(self, logits, is_test=True, eps=0.1,
+                       agree_action_id=None, agree_prob=0.0):
         """
         method that select an action from the output logits
         :param logits: the logits output by a model
         :param is_test: True if it is inference time else false
+        :param agree_action_id: flat id of ('agree', 0), or None
+        :param agree_prob: probability of steering a RANDOM exploration step to
+            agree (= the deal-rate weight). Only used in the epsilon branch.
         """
         # convert logits to probabilities
         probs = nn.functional.softmax(logits, dim=1)
@@ -1036,10 +1107,31 @@ class PADPPTrainer(Trainer):
             action = logits.argmax()
             return action.item(), None
         else:
-            # epsilon greedy
+            # epsilon greedy. self.current_eps (set by the curriculum/RL loop)
+            # overrides the fixed default so exploration can be annealed across
+            # epochs; falls back to the eps argument when no schedule is set.
+            cur = getattr(self, 'current_eps', None)
+            if cur is not None:
+                eps = cur
             p = np.random.random()
             if p < eps:
-                action = np.random.randint(0, logits.size(-1))
+                # Explore only among VALID (un-masked) actions. Masked actions
+                # have logit -inf; sampling uniformly over all indices would let
+                # exploration pick masked duplicates (e.g. greet at bin>0),
+                # polluting the buffer. Restrict the random draw to finite logits.
+                valid = torch.isfinite(logits.view(-1)).nonzero(as_tuple=True)[0]
+                # Deal-weighted agree bias: with prob = agree_prob (the deal
+                # weight) steer this random step to ('agree', 0) when it is a
+                # valid action, so deal-caring skills try agree much more often.
+                if (agree_action_id is not None and agree_prob > 0.0
+                        and np.random.random() < agree_prob
+                        and 0 <= agree_action_id < logits.size(-1)
+                        and torch.isfinite(logits.view(-1)[agree_action_id])):
+                    action = int(agree_action_id)
+                elif valid.numel() > 0:
+                    action = valid[np.random.randint(0, valid.numel())].item()
+                else:
+                    action = logits.argmax().item()
             else:
                 action = logits.argmax().item()
             return action, None

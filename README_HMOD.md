@@ -1,5 +1,32 @@
 # H-MOD: Buyer-Agent Objective Drift Training and Evaluation
 
+> **Merge note (R-PADPP main).** H-MOD is merged onto the R-PADPP `main` branch
+> and adapted in three ways:
+> 1. **3-D objectives.** The low policy is trained on
+>    `[sl_ratio, fairness, deal_rate]` (no `avg_turn`). `OBJECTIVE_ORDER` is now
+>    3-D and `hmod.scenario.coerce_objective_weight` collapses any legacy 4-D
+>    vector (dropping `avg_turn`, folding its urgency into `deal_rate`), so the
+>    generated 4-D scenario files below still load unchanged.
+> 2. **Neural low policy.** Pass `--low_policy_checkpoint <dmorl_phase2.pth>` to
+>    `eval_hmod.py` to drive the trained R-PADPP model (`hmod/low_policy.py` →
+>    `hmod.policy.NeuralBuyerPolicy`) instead of the rule-scaffold buyer.
+> 3. **Experience accumulation.** `--use_experience_buffer`
+>    (`hmod/experience.py`) feeds a summary of past episode outcomes into the LLM
+>    reflection prompt so `w_local` improves over time.
+> 4. **Hint training (`train_hmod.py`).** The LLM controller self-plays against
+>    the drift simulator, reads back the full metric feedback with a glossary,
+>    and an LLM distiller turns it into a reusable playbook of *general hints*
+>    saved to JSON. Eval loads it via `--hints_file` to ground inference. See
+>    section 4.4 below.
+> 5. **Two-agent phase (`train_hmod_2agent.py`, `eval_hmod.py --two_agent`).** An
+>    Intent-Drift Detector LLM tracks seller intent and a separate High-Policy LLM
+>    emits `w_local` (as an NL percentage allocation) on detected drift. Each agent
+>    distils its own hint playbook with a review/remove mechanism. See section 4.5.
+>
+> The merged-pipeline overview lives in the main `README.md` (section 7). Some
+> examples below still show the original 4-D weights, which load fine via the
+> 3-D coercion above.
+
 This README documents the current H-MOD implementation in this repository.
 H-MOD is implemented as a buyer-agent extension on top of the existing DMORL/PADPP
 multi-objective dialogue policy code.
@@ -328,6 +355,238 @@ Phase 2: dynamic objective-conditioned RLT
 checkpoints/hmod_neg/hmod_phase2_dynamic.pth
 ```
 
+### 4.4 LLM Hint Training (`train_hmod.py`)
+
+This is a lightweight, *no-gradient* training loop for the **LLM meta-controller**
+(the low policy is the already-trained R-PADPP checkpoint and is frozen). The LLM
+learns, in natural language, *when to shift `w_t`* by self-playing and reading
+back its own metric feedback.
+
+Loop (`hmod/hint_trainer.py`):
+
+1. **Self-play epoch.** Run every drift scenario with the neural low policy and
+   the LLM controller, injecting the current hint playbook into the reflection
+   prompt (`hint_provider` → `experience_provider`).
+2. **Metric feedback.** Aggregate GSR / llm_sr / T2DA / CVR, and build a compact
+   per-episode digest (`build_episode_digest`): which `w_t` was used under which
+   seller intent, and the resulting metrics (failures first).
+3. **Distill (`hmod/hint_distiller.py`).** An LLM receives the **metric glossary**
+   (`hmod/hints.py:METRIC_GLOSSARY`, so it understands what each metric rewards),
+   the digest, the aggregate metrics and the current hints, and rewrites a small
+   set of **general, transferable hints** (≤ `--max_hints`).
+4. **Persist (`hmod/hints.py:HintStore`).** Hints + iteration history + glossary
+   are saved to `--hints_out` JSON and logged to `logs/hmod_train_<ts>.log`.
+
+Run it:
+
+```bash
+python train_hmod.py \
+  --epochs 5 \
+  --scenario_file config/scenario/hmod_buyer_drift_scenarios.yaml \
+  --llm_model fpt \
+  --low_policy_checkpoint checkpoints/dmorl_phase2_best.pth \
+  --low_policy_gen_models fpt --low_policy_model_type fpt \
+  --judge_model fpt \
+  --turn_limit_mult 2.0 \
+  --hints_out outputs/hmod_hints.json
+```
+
+Then evaluate with the learned playbook loaded back in:
+
+```bash
+python eval_hmod.py \
+  --mode hmod_dynamic --controller_mode llm_reflection --llm_model fpt \
+  --low_policy_checkpoint checkpoints/dmorl_phase2_best.pth \
+  --low_policy_gen_models fpt --low_policy_model_type fpt \
+  --judge_model fpt \
+  --hints_file outputs/hmod_hints.json \
+  --verbose --turn_limit_mult 3.0
+```
+
+Notes:
+- The controller and the distiller share the same LLM backend (`--llm_model fpt`
+  reuses `FPT_*` from `.env`).
+- `--hints_file` composes with `--use_experience_buffer`: general hints + the
+  per-`(goal, drift)` experience summary are concatenated into one grounding block.
+- `--resume_hints` continues from an existing `--hints_out` instead of starting empty.
+
+### 4.5 Two-Agent Intent-Drift Phase (`train_hmod_2agent.py`)
+
+This phase splits the controller into **two independent LLM agents**, each with
+its own hint playbook, sitting in front of the frozen R-PADPP low policy.
+
+```
+                 ┌─────────────────────────────────────────────┐
+   dialogue ───▶ │ Agent 1: Intent-Drift Detector              │
+   turn, prev    │  knows seller-intent catalog + few-shots     │
+   intent        │  → {drift?, current_intent}                  │
+                 └───────────────┬─────────────────────────────┘
+                          drift? │ current_intent
+                                 ▼
+   goal ───────▶ ┌─────────────────────────────────────────────┐
+   dialogue      │ Agent 2: High-Policy w_local LLM            │
+   intent        │  outputs an NL % allocation → vector w_local │
+                 └───────────────┬─────────────────────────────┘
+                                 ▼  w_local
+                       ┌──────────────────────┐
+                       │ frozen R-PADPP low    │ acts continuously under
+                       │ policy (w → action)   │ w_local until next drift
+                       └──────────────────────┘
+```
+
+**Inference pipeline** ([`hmod/two_agent_controller.py`](hmod/two_agent_controller.py)):
+
+- **Turn 0** — no intent, no dialogue, goal only → High-Policy → `w_local`.
+- **Later turns** — the Detector watches the dialogue. While it reports *no drift*,
+  the low policy keeps acting under the carried `w_local`. On *detected drift* the
+  High-Policy regenerates `w_local` for the new intent. The two agents act
+  independently; each loads its own hint playbook.
+
+**Training** ([`hmod/two_agent_trainer.py`](hmod/two_agent_trainer.py)) — the two
+agents are trained separately each epoch:
+
+- **High-Policy** is driven by the **gold** seller intent (from the simulator), so
+  it learns the *weight* mapping cleanly; its feedback is dialogue quality
+  (GSR / T2DA / CVR).
+- **Detector** predicts every turn and is scored against the gold intent
+  (intent accuracy + drift accuracy); the high-policy does *not* depend on its
+  prediction during training.
+- **Review mechanism** — at each epoch end, each agent reviews the whole epoch +
+  its current hints and proposes hints to **remove** (no longer helping) and to
+  **add**. A hint proposed for removal on **two consecutive epochs** is dropped
+  ([`HintStore.review_update`](hmod/hints.py)).
+
+`w_local` is produced in **language first**: the High-Policy must emit
+`"In the short term, focus X% on sl_ratio, Y% on fairness, Z% on deal_rate"` and
+the matching `w_t`, which is parsed back to `[X, Y, Z]/100`
+([`parse_allocation_to_weight`](hmod/high_policy.py)).
+
+Train:
+
+```bash
+python train_hmod_2agent.py \
+  --epochs 6 --llm_model fpt \
+  --scenario_file config/scenario/generated/hmod_bargain_train_scenarios.yaml \
+  --num_cases 150 \
+  --low_policy_checkpoint checkpoints/dmorl_phase2_best.pth \
+  --low_policy_gen_models fpt --low_policy_model_type fpt \
+  --judge_model fpt \
+  --policy_hints_out outputs/hmod_policy_hints.json \
+  --detector_hints_out outputs/hmod_detector_hints.json
+```
+
+Evaluate on the held-out test split with both playbooks loaded:
+
+```bash
+python eval_hmod.py --two_agent \
+  --mode hmod_dynamic --llm_model fpt \
+  --scenario_file config/scenario/generated/hmod_bargain_test_scenarios.yaml \
+  --low_policy_checkpoint checkpoints/dmorl_phase2_best.pth \
+  --low_policy_gen_models fpt --low_policy_model_type fpt \
+  --judge_model fpt \
+  --policy_hints_file outputs/hmod_policy_hints.json \
+  --detector_hints_file outputs/hmod_detector_hints.json \
+  --verbose
+```
+
+**Drift coverage / turn budget.** `--turn_limit_mult` defaults to **1.5** in this
+phase so the condition-based drifts (`gradual_firming`, `frustrated_walkaway`)
+have time to fire and the controller has room to adapt after drift. An offline
+audit over 400 train scenarios (rule buyer, deterministic seller) shows non-static
+episodes drift ~94% of the time with several post-drift turns; with the neural low
+policy `abrupt_final_offer` fires at its configured `turn_id`. Note that
+`static_no_drift` (25% of the data) never drifts **by design** — it is the
+no-drift control. To run only drifting episodes, filter the scenario file to
+`drift_mode != static_no_drift`.
+
+#### 4.5.1 Agent 1 — Intent-Drift Detector prompt
+
+System:
+
+```
+You are the Intent-Drift Detector for a negotiation. The opponent is the SELLER.
+From the visible dialogue, the current turn and the previously believed seller
+intent, decide whether the seller's intent has DRIFTED and what the seller's
+CURRENT intent is. Judge only from visible evidence; do not assume hidden labels.
+```
+
+User (JSON) carries:
+
+```
+possible_seller_intents : {neutral, firm, final_offer, walkaway_risk} + descriptions
+few_shot_examples       : per-intent examples built from the train data
+                          (persona + canonical seller line + gold label)
+learned_detection_hints : the detector's current hint playbook
+current_turn            : t
+previously_believed_intent : the last believed intent
+visible_dialogue        : last 12 turns
+required_json_schema    : {drift_detected, current_intent, reason}
+```
+
+The seller-intent catalog and the canonical few-shot utterances live in
+[`hmod/intent_detector.py`](hmod/intent_detector.py)
+(`SELLER_INTENT_TYPES`, `CANONICAL_UTTERANCES`, `DRIFT_TARGET_INTENT`):
+
+| intent | canonical seller utterance |
+| --- | --- |
+| `neutral` | "I can come down a bit, but I would need about $X." |
+| `firm` | "We have gone back and forth for too long. I can only consider offers close to $X." |
+| `final_offer` | "My final price is $X. If you cannot do that, I will pass." |
+| `walkaway_risk` | "I am getting frustrated. I can do $X, otherwise I will sell elsewhere." |
+
+#### 4.5.2 Agent 2 — High-Policy w_local prompt
+
+System:
+
+```
+You are the High-Policy weight controller for a BUYER agent. Given the buyer's
+macro goal, the visible dialogue and the CURRENT seller intent, set the
+short-term weight w_local over three objectives for the low policy. FIRST reason
+in natural language as an explicit percentage allocation, THEN give the matching
+numeric vector. The buyer must never plan to exceed the price ceiling.
+```
+
+User (JSON) carries `macro_goal`, `objectives_in_order`,
+`objective_meaning`, `current_seller_intent`, `previous_w_local`,
+`learned_weight_hints`, `buyer_constraints`, `last_seller_offer`, `item_context`,
+`current_turn`, `visible_dialogue`, and the required schema:
+
+```
+{
+  "allocation": "In the short term, focus X% on sl_ratio (price saving), Y% on fairness, Z% on deal_rate",
+  "w_t": {"sl_ratio": X/100, "fairness": Y/100, "deal_rate": Z/100},
+  "reason": "brief justification tied to the current seller intent"
+}
+```
+
+#### 4.5.3 Review prompts (per agent, each epoch)
+
+High-Policy review system:
+
+```
+You coach the High-Policy weight controller of a BUYER agent. It sets
+w_local = [sl_ratio, fairness, deal_rate] from the current seller intent. Review
+this epoch's metric feedback and the current hint playbook, then propose which
+hints to REMOVE (not helping GSR/T2DA/CVR) and which general, transferable hints
+to ADD. Hints are about how to set w_local for a given seller intent, never about
+a specific item or price.
+```
+
+Detector review system:
+
+```
+You coach the Intent-Drift Detector of a negotiation buyer agent. It reads the
+dialogue and predicts whether the SELLER intent drifted and what it is
+(neutral|firm|final_offer|walkaway_risk). Review this epoch's accuracy feedback
+(vs gold) and the current hint playbook, then propose which hints to REMOVE (not
+improving accuracy) and which general detection hints to ADD (cues that
+distinguish the intents).
+```
+
+Both reviews return `{analysis, remove, add}` and feed `HintStore.review_update`
+(drop-after-two-consecutive-proposals). The metric glossary injected into the
+high-policy review is [`hmod/hints.py:METRIC_GLOSSARY`](hmod/hints.py).
+
 ## 5. How H-MOD Evaluation Works
 
 Use `eval_hmod.py`.
@@ -475,6 +734,7 @@ Definitions:
 ```text
 t_drift = first turn where simulator drift is triggered
 t_adapt = first turn >= t_drift where ||w_t - w_pre_drift||_1 >= 0.25
+          AND the shift is in the expected direction (relaxed _direction_ok)
 T2DA = t_adapt - t_drift
 ```
 
@@ -487,7 +747,13 @@ Additional checks:
 turn_limit - t_drift + 1
 ```
 
-- If `expected_weight_shift` is defined, adaptation must move in the expected direction.
+- Adaptation requires both **magnitude** (`||w_t - w_pre_drift||_1 >= 0.25`) and the
+  right **direction** (`_direction_ok`, relaxed): no expected objective moves the
+  opposite way and at least one moves the correct way (a flat objective is allowed).
+  The high policy is given a per-intent `weight_adaptation_guideline` (see
+  `hmod/high_policy.py:INTENT_ADAPTATION_GUIDE`) so it knows which way to shift
+  w_local; T2DA then checks that it did. The direction prior comes from the
+  scenario's `expected_weight_shift`.
 
 Relevant logs:
 

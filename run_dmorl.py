@@ -38,23 +38,32 @@ Usage examples:
       --n_basic_skills 5 \
       --n_advanced_skills 5
 
-  # ── Phase 1a debug test (fast, negotiation, no Phase 1b/2) ──────────────────
-  # Run this first to verify the curriculum loop works end-to-end on the server.
-  # Checkpoint is saved to checkpoints/.../dmorl_phase1a.pth automatically.
-  # Eval dialogues are written to debug_output/eval_dialogues_<timestamp>/.
+  # ── R-PADPP Phase 1 only (anchor curriculum + Table 2 eval) ────────────────
   python run_dmorl.py \
       --scenario negotiation \
       --datasets craigslist_bargain \
       --models dmorl \
-      --gen_models chatgpt \
+      --gen_models fpt --model_type fpt \
       --metrics sr,deal_rate,sl_ratio,fairness,avg_turn \
       --loggers terminal,file \
-      --n_basic_skills 2 \
-      --n_skill_train_epochs 3 \
-      --num_train_rl_epochs 3 \
+      --n_basic_skills 7 \
+      --n_skill_train_epochs 15 \
       --run_curriculum \
-      --no_dynamic_weight \
-      --phase1a_only \
+      --phase1_only \
+      --debug
+
+  # ── R-PADPP Phase 2 only (load Phase 1 checkpoint, run regret-gated GPI) ───
+  python run_dmorl.py \
+      --scenario negotiation \
+      --datasets craigslist_bargain \
+      --models dmorl \
+      --gen_models fpt --model_type fpt \
+      --metrics sr,deal_rate,sl_ratio,fairness,avg_turn \
+      --loggers terminal,file \
+      --n_rpadpp_epochs 30 \
+      --epsilon_threshold 0.05 \
+      --alpha_rpadpp 0.5 \
+      --phase2_only \
       --debug
 """
 
@@ -77,14 +86,7 @@ _warnings.filterwarnings("ignore", category=UserWarning, module="transformers")
 from dotenv import load_dotenv
 from accelerate import Accelerator, DistributedDataParallelKwargs
 from loguru import logger
-try:
-    import wandb
-except ModuleNotFoundError:
-    class _NoOpWandB:
-        def finish(self):
-            return None
-
-    wandb = _NoOpWandB()
+import wandb
 
 # Redirect loguru to file only (INFO+); removes default stderr handler
 logger.remove()
@@ -133,8 +135,47 @@ def parse_dmorl_args():
     dmorl_parser.add_argument('--run_curriculum', action='store_true', default=None)
     dmorl_parser.add_argument('--no_curriculum', dest='run_curriculum', action='store_false')
     dmorl_parser.add_argument('--force_rediscover_skills', action='store_true')
-    dmorl_parser.add_argument('--phase1a_only', action='store_true', default=False,
-                               help='Stop after Phase 1a and save checkpoint (for isolated testing)')
+    dmorl_parser.add_argument('--phase1_only', action='store_true', default=False,
+                               help='Stop after Phase 1 anchor curriculum (save dmorl_phase1.pth and eval Table 2)')
+    dmorl_parser.add_argument('--phase2_only', action='store_true', default=False,
+                               help='Skip SFT + Phase 1 (load dmorl_phase1.pth), run R-PADPP Phase 2 only')
+    dmorl_parser.add_argument('--phase1_ckpt_name', type=str, default=None,
+                               help='Which Phase 1 ckpt Phase 2 loads (e.g. dmorl_phase1_best.pth). Default dmorl_phase1.pth')
+    dmorl_parser.add_argument('--n_rpadpp_epochs', type=int, default=None,
+                               help='Phase 2 RL epoch count override')
+    dmorl_parser.add_argument('--epsilon_threshold', type=float, default=None,
+                               help='Regret threshold for admitting w to W_converged')
+    dmorl_parser.add_argument('--alpha_rpadpp', type=float, default=None,
+                               help='Mixing weight: L = (1-α)·L_self + α·L_know')
+    dmorl_parser.add_argument('--use_active_sampling', action='store_true', default=None,
+                               help='Prioritise high-regret (not-yet-converged) w for Phase 2 rollout')
+    dmorl_parser.add_argument('--regret_sampling_power', type=float, default=None,
+                               help='Sharpen active sampling: p proportional to regret**power (default 2.0)')
+    dmorl_parser.add_argument('--use_llm_price_extraction', action='store_true', default=False,
+                               help='Use the LLM (gen model) to extract the buyer price in compute_reward')
+    dmorl_parser.add_argument('--use_price_tag', action='store_true', default=False,
+                               help='Buyer/seller LLMs append a [[PRICE: x]] tag; compute_reward parses it directly')
+    dmorl_parser.add_argument('--fairness_train_scale', type=float, default=None,
+                               help='Multiply fairness reward by this during training (e.g. 2.0). Keep 1.0 at eval.')
+    dmorl_parser.add_argument('--turn_penalty', type=float, default=None,
+                               help='Per-turn penalty subtracted from every reward component during training (e.g. 0.05). Keep 0.0 at eval.')
+    dmorl_parser.add_argument('--no_mask_redundant', dest='mask_redundant_actions',
+                               action='store_false', default=None,
+                               help='Disable masking of bin-redundant duplicate actions (default: masked)')
+    dmorl_parser.add_argument('--eps_start', type=float, default=None,
+                               help='Epsilon at epoch 0 (default 1.0)')
+    dmorl_parser.add_argument('--eps_end', type=float, default=None,
+                               help='Floor epsilon after decay (default 0.05)')
+    dmorl_parser.add_argument('--eps_decay_epochs', type=int, default=None,
+                               help='Epochs to linearly decay eps_start→eps_end before the floor (default 15)')
+    dmorl_parser.add_argument('--eval_every_epochs', type=int, default=None,
+                               help='Phase 1: eval greedy SR every K epochs and keep dmorl_phase1_best.pth (0=off)')
+    dmorl_parser.add_argument('--quick_eval_episodes', type=int, default=None,
+                               help='Dialogues per anchor for the periodic best-checkpoint SR eval (default 2)')
+    dmorl_parser.add_argument('--sft_class_balanced', action='store_true', default=None,
+                               help='Class-balanced SFT loss (upweight rare strategies like agree)')
+    dmorl_parser.add_argument('--agree_explore_bias', action='store_true', default=None,
+                               help='Steer epsilon-random exploration to agree with prob = deal weight')
     dmorl_parser.add_argument('--debug', action='store_true', default=False,
                                help='Print LLM prompts/outputs, per-step rewards/losses, save eval dialogues')
     dmorl_parser.add_argument('--debug_output_dir', type=str, default=None,
@@ -145,39 +186,6 @@ def parse_dmorl_args():
                                help='Skip offline evaluation phase')
     dmorl_parser.add_argument('--sampled_times', type=int, default=None,
                                help='Episodes collected per RL epoch (override config, e.g. 5 for fast debug)')
-    dmorl_parser.add_argument('--hmod_enabled', action='store_true', default=None,
-                               help='Use H-MOD buyer-objective controller inside DMORL training')
-    dmorl_parser.add_argument('--hmod_objective_file', type=str, default=None,
-                               help='Python assignment file with BUYER_STRATEGY_INTENTS')
-    dmorl_parser.add_argument('--hmod_objective_id', type=str, default=None,
-                               help='Optional buyer objective id to prioritize for H-MOD')
-    dmorl_parser.add_argument('--hmod_reflection_horizon', type=int, default=None,
-                               help='T: self-reflection horizon for H-MOD dynamic W')
-    dmorl_parser.add_argument('--hmod_phase2_dynamic_training',
-                               action='store_true', default=None,
-                               help='Train H-MOD Phase 2 with dynamic W inside episodes')
-    dmorl_parser.add_argument('--no_hmod_phase2_dynamic_training',
-                               dest='hmod_phase2_dynamic_training',
-                               action='store_false')
-    dmorl_parser.add_argument('--hmod_controller_mode',
-                               choices=['rule_scaffold', 'llm_reflection'],
-                               default=None,
-                               help='rule_scaffold for offline tests, llm_reflection for NL objective -> LLM W_t')
-    dmorl_parser.add_argument('--hmod_macro_goal', type=str, default=None,
-                               help='Optional direct natural-language buyer objective for LLM reflection')
-    dmorl_parser.add_argument('--hmod_llm_model', type=str, default=None,
-                               help='Optional override. Defaults to DEEPINFRA_MODEL from .env')
-    dmorl_parser.add_argument('--hmod_llm_api_key', type=str, default=None,
-                               help='Optional override. Defaults to DEEPINFRA_API_KEY from .env')
-    dmorl_parser.add_argument('--hmod_llm_api_key_env', type=str, default=None,
-                               help='Environment variable containing the H-MOD LLM API key')
-    dmorl_parser.add_argument('--hmod_llm_base_url', type=str, default=None,
-                               help='Optional override. Defaults to DEEPINFRA_BASE_URL from .env')
-    dmorl_parser.add_argument('--hmod_llm_temperature', type=float, default=None)
-    dmorl_parser.add_argument('--hmod_llm_max_tokens', type=int, default=None)
-    dmorl_parser.add_argument('--hmod_llm_fallback_to_rule',
-                               action='store_true', default=None,
-                               help='Fallback to rule_scaffold if LLM reflection fails')
 
     import sys
     dmorl_extra, _ = dmorl_parser.parse_known_args(sys.argv[1:])
@@ -203,6 +211,12 @@ if __name__ == '__main__':
     game_config.set_params({
         'seed': args['seed'],
         'model_type': args['model_type'],
+        'use_llm_price_extraction': dmorl_overrides.get('use_llm_price_extraction', False),
+        'use_price_tag': dmorl_overrides.get('use_price_tag', False),
+        'fairness_train_scale': (dmorl_overrides.get('fairness_train_scale')
+                                 if dmorl_overrides.get('fairness_train_scale') is not None else 1.0),
+        'turn_penalty': (dmorl_overrides.get('turn_penalty')
+                         if dmorl_overrides.get('turn_penalty') is not None else 0.0),
     })
 
     # ── Datasets ──────────────────────────────────────────────────────────────
@@ -307,9 +321,14 @@ if __name__ == '__main__':
                     dmorl_params['run_sft'] = False
                 if dmorl_overrides.get('skip_offline_eval'):
                     dmorl_params['run_offline_eval'] = False
-                if dmorl_overrides.get('hmod_reflection_horizon') is not None:
-                    dmorl_params['dynamic_weight_horizon'] = dmorl_overrides[
-                        'hmod_reflection_horizon']
+                # --phase1_only: stop after Phase 1
+                if dmorl_overrides.get('phase1_only'):
+                    dmorl_params['phase1_only'] = True
+                # --phase2_only: skip SFT + Phase 1, load dmorl_phase1.pth, run R-PADPP
+                if dmorl_overrides.get('phase2_only'):
+                    dmorl_params['run_sft'] = False
+                    dmorl_params['run_offline_eval'] = False
+                    dmorl_params['phase2_only'] = True
                 model_config.set_params(dmorl_params)
 
             model = model_class(model_config)
