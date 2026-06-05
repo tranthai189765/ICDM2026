@@ -746,7 +746,10 @@ Additional checks:
 turn_limit - t_drift + 1
 ```
 
-- If `expected_weight_shift` is defined, adaptation must move in the expected direction.
+- Adaptation is measured by **magnitude only** (`||w_t - w_pre_drift||_1 >= 0.25`).
+  The per-mode `expected_weight_shift` gold label is a hand-designed prior, so the
+  metric is not conditioned on direction; `compute_t2da` still accepts the argument
+  for backward compatibility but ignores it.
 
 Relevant logs:
 

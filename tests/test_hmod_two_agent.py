@@ -128,18 +128,16 @@ def test_review_streak_resets_when_not_proposed(tmp_path):
     assert "A" in store.hints
 
 
-# ── relaxed T2DA direction check ─────────────────────────────────────────────
-def test_t2da_relaxed_allows_flat_objective():
+# ── T2DA = magnitude only (direction not checked) ────────────────────────────
+def test_t2da_counts_large_shift():
     wt = [{"turn": 0, "weight_vector": [0.6, 0.2, 0.2]},
-          {"turn": 1, "weight_vector": [0.3, 0.2, 0.5]}]  # sl down, deal up, fairness flat
-    out = compute_t2da(wt, t_drift=1, turn_limit=8,
-                       expected_weight_shift={"sl_ratio": "down", "fairness": "up", "deal_rate": "up"})
+          {"turn": 1, "weight_vector": [0.3, 0.2, 0.5]}]   # ||Δ||₁ = 0.6 >= 0.25
+    out = compute_t2da(wt, t_drift=1, turn_limit=8)
     assert out["adapted"] is True and out["t2da"] == 0
 
 
-def test_t2da_penalises_opposite_move():
-    wt = [{"turn": 0, "weight_vector": [0.6, 0.2, 0.2]},
-          {"turn": 1, "weight_vector": [0.8, 0.1, 0.1]}]   # sl_ratio UP = opposite of expected down
-    out = compute_t2da(wt, t_drift=1, turn_limit=8,
-                       expected_weight_shift={"sl_ratio": "down", "deal_rate": "up"})
-    assert out["adapted"] is False
+def test_t2da_subthreshold_shift_not_adapted():
+    wt = [{"turn": 0, "weight_vector": [0.50, 0.30, 0.20]},
+          {"turn": 1, "weight_vector": [0.55, 0.28, 0.17]}]  # ||Δ||₁ = 0.10 < 0.25
+    out = compute_t2da(wt, t_drift=1, turn_limit=8)
+    assert out["adapted"] is False and out["t2da"] == 8 - 1 + 1  # penalty
