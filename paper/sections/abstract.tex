@@ -1,0 +1,25 @@
+\begin{abstract}
+Traditional goal-oriented dialogue agents often require costly retraining when
+new objectives or constraints arise. Recent multi-objective approaches improve
+this limitation by parameterizing goals, but they typically rely on explicit
+numeric preference vectors. This interface is poorly aligned with practical
+settings, where users express macro-goals in natural language and expect the
+agent to balance strategic flexibility with non-negotiable constraints. The
+problem becomes harder under intent drift: as the dialogue context evolves, a
+static policy may continue following an outdated short-term strategy even when
+the user's macro-goal calls for adaptation. We propose \textbf{ALMOND}, a
+hierarchical framework for learning adaptive dialogue policies from
+natural-language macro-goals. ALMOND combines a low-level policy that executes
+communication skills with a regret-based mechanism that prioritizes
+under-mastered skills, enabling complex behaviors to be bootstrapped from
+simpler ones. A high-level policy monitors intent shifts and selects
+short-term skills using strategic hints distilled during training, so that
+local behavior remains aligned with the overarching linguistic goal. We
+evaluate ALMOND under constrained buyer-side negotiation with
+persona-conditioned seller drift. Across benchmark settings, ALMOND improves
+LLM-as-Judge goal completion by 4--7 percentage points, reduces adaptation
+delay by 2--3 turns, and lowers constraint violations compared with
+static-weight and ablation baselines. Phase-1 skill training also improves
+$r$-fair, $r$-gain, and $r$-deal by 3--6 percentage points while reducing
+average turns.
+\end{abstract}

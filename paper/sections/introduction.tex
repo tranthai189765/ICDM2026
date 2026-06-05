@@ -1,0 +1,112 @@
+\section{Introduction}
+
+Goal-oriented dialogue agents are increasingly expected to act on behalf of
+users, not simply to generate fluent responses. In buyer-side negotiation, for
+example, a useful agent must pursue a favorable price while keeping the seller
+engaged, reaching an agreement within a limited number of turns, and respecting
+the buyer's budget. Target-driven recommendation involves a similar balancing
+act: the agent should guide the user toward a desired item without degrading
+satisfaction or conversational efficiency. These objectives are not independent.
+An aggressive bargaining move may improve price utility if the seller remains
+cooperative, yet the same move can reduce the probability of closing the deal.
+The policy therefore has to reason about strategic trade-offs and constraints
+as part of the dialogue process itself.
+
+The difficulty is compounded by the way goals are specified in practice.
+Traditional goal-oriented policies are usually trained for a fixed objective,
+which makes adaptation to new user requirements expensive. Recent
+multi-objective methods reduce this cost by conditioning a policy on preference
+vectors, but the interface remains rigid: it assumes that the user's goal has
+already been translated into explicit numerical weights. In realistic
+deployment, users are more likely to provide natural-language macro-goals, such
+as ``buy cheaply, but do not lose the seller if the item seems scarce.'' Such
+instructions combine soft preferences, situational conditions, and hard
+constraints. Their meaning is also local. Early in a negotiation, the agent may
+reasonably emphasize price gain; after the seller becomes firm, issues a final
+offer, or signals walkaway risk, the same macro-goal may require a temporary
+shift toward deal probability, rapport preservation, or turn efficiency. A
+single static vector can describe one trade-off, but it does not explain how
+the agent should change its short-term behavior as the conversation evolves.
+
+Prior work on target-guided and proactive dialogue has made substantial
+progress on multi-turn planning. Target-guided models learn keyword or topic
+transitions toward a predefined target
+\cite{tang-etal-2019-target,qin2020dynamic,zhong2021keyword,kishinami-etal-2022-target,yang-etal-2022-topkg},
+while recent planners use Brownian-bridge trajectories, LLM reasoning,
+self-reflection, experience retrieval, and dual-process planning to improve
+future-oriented behavior
+\cite{wang-etal-2023-dialogue,zheng-etal-2024-thoughts,guo-etal-2024-pcqpr,dao-etal-2024-experience,he2024planning}.
+This literature shows that dialogue systems benefit from planning beyond the
+next utterance. At the same time, much of it assumes that the target is fixed
+before the interaction is optimized. The setting we study is different: the
+macro-goal remains stable at the linguistic level, but the short-term skill
+needed to pursue it can change as the other party's intent and stance change.
+
+The closest multi-objective predecessor to our work is PADPP, which formulates
+goal-oriented dialogue as preference-conditioned policy learning and trains a
+single planner that adapts to different objective vectors at inference time
+\cite{dao-liao-2025-one}. Its use of generalized policy improvement (GPI)
+connects naturally to the broader line of work on reusable behavior across
+reward functions \cite{barreto2017successor,barreto2018transfer}. PADPP
+substantially reduces the need to retrain a separate policy for every objective
+setting. However, it still assumes that the preference vector is given. This
+leaves open a practical question at the interface between human intent and
+policy control: how should an ambiguous macro-goal be decomposed into
+short-term dialogue skills, when should the active skill change, and how should
+that change be justified by evidence in the conversation?
+
+This question becomes especially important under conversational intent drift.
+Fine-grained intention understanding suggests that dialogue intent involves
+multiple aspects, including situation, emotion, action, and knowledge
+\cite{liang-etal-2025-intentionframe}, and recent drift detection work studies
+how active intent changes over continuous conversations
+\cite{wang2025detecting}. In our buyer-side negotiation setting, drift appears
+as a change in the seller's stance: a seller may begin neutral, become firm
+after repeated low offers, issue a final offer, or signal walkaway risk. If the
+buyer continues executing the same short-term strategy, it may bargain past the
+point at which the seller's stance has changed; if it switches too early, it
+may sacrifice price utility unnecessarily. We therefore study goal-driven
+dialogue policy learning in which a stable natural-language macro-goal must be
+served through adaptive short-term skills under intent drift and hard
+constraints.
+
+We propose \textbf{ALMOND}, a hierarchical framework for learning adaptive
+dialogue policies from natural-language macro-goals. ALMOND separates the
+problem into two coupled levels. At the low level, the policy learns reusable
+communication skills, such as bargaining, conceding, asking for clarification,
+or preserving rapport. Because complex dialogue behaviors often depend on
+skills that are unevenly learned, ALMOND uses a regret-based mechanism to give
+more training attention to under-mastered skills rather than assuming that all
+skills progress uniformly. At the high level, a policy monitors the dialogue
+state for intent shifts and selects short-term skills conditioned on the
+macro-goal, the recent interaction history, and strategic hints distilled
+during training. In this design, language-level goal interpretation guides
+strategic skill selection, while the learned low-level policy remains
+responsible for executing concrete communicative behavior.
+
+We evaluate ALMOND with metrics that reflect constrained adaptation rather
+than final task completion alone. LLM-SR measures linguistic goal completion
+using an LLM-as-Judge protocol with human-verification samples. Goal Success
+Rate (GSR) counts a dialogue as successful only when the buyer reaches a deal
+within the buyer's budget ceiling and turn limit. Turn-to-Drift Adaptation
+Delay (T2DA) measures $t_{\mathrm{adapt}}-t_{\mathrm{drift}}$, and Constraint
+Violation Rate (CVR) tracks blocked and executed safety violations. Across our
+benchmark settings, ALMOND improves LLM-as-Judge goal completion by 4--7
+percentage points and reduces adaptation delay by 2--3 turns over
+static-weight and ablation baselines. Phase-1 skill training further improves
+$r$-fair, $r$-gain, and $r$-deal by 3--6 percentage points while reducing
+average turns.
+
+Our contributions are:
+\begin{itemize}
+    \item We formulate goal-driven dialogue from ambiguous natural-language
+    macro-goals under conversational intent drift and hard constraints.
+    \item We propose ALMOND, a hierarchical framework that combines
+    regret-aware low-level skill learning with drift-aware high-level skill
+    selection.
+    \item We use strategic hints distilled during training to guide short-term
+    skill selection toward the overarching linguistic goal.
+    \item We construct persona-conditioned seller simulators with deterministic
+    drift triggers and evaluate constrained adaptation with LLM-SR, GSR, T2DA,
+    and CVR.
+\end{itemize}

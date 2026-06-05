@@ -1,0 +1,68 @@
+\section{Related Work}
+
+\paragraph{Target-guided and proactive dialogue planning.}
+Target-guided dialogue studies how an agent can steer a conversation toward a
+specified topic, target, or endpoint. Early methods model this process through
+keyword prediction, discourse constraints, commonsense knowledge, and global
+planning over knowledge graphs
+\cite{tang-etal-2019-target,qin2020dynamic,zhong2021keyword,kishinami-etal-2022-target,yang-etal-2022-topkg}.
+More recent proactive planners broaden the planning signal with stochastic path
+modeling, action-topic planning, LLM-based reasoning, reflection, and
+consistency correction
+\cite{wang-etal-2023-dialogue,wang2024target,zheng-etal-2024-thoughts,guo-etal-2024-pcqpr,zhang-etal-2025-enhancing-goal}.
+These approaches are closely related in spirit because they treat dialogue as a
+long-horizon control problem rather than a sequence of independent responses.
+Their targets, however, are usually specified before planning. ALMOND considers
+a complementary setting in which the macro-goal remains expressed in language,
+but the short-term skill needed to pursue it changes with the evolving dialogue
+state.
+
+\paragraph{Recommendation and negotiation foundations.}
+Conversational recommendation provides data and tasks for proactive target
+pursuit. DuRecDial and DuRecDial 2.0 introduce multi-domain recommendation
+dialogues
+\cite{liu-etal-2020-towards-conversational,liu-etal-2021-durecdial}, while
+target-driven recommendation methods plan action-topic paths or retrieve past
+experience to anticipate future states
+\cite{wang2022follow,dao-etal-2024-experience}. Negotiation dialogue research
+studies a different but equally strategic setting, where agents learn to bargain
+through end-to-end optimization, self-play, or decoupled strategy and language
+generation \cite{lewis-etal-2017-deal,he-etal-2018-decoupling}. These domains
+motivate the skill space used in ALMOND, including bargaining, concession,
+rapport maintenance, clarification, and deal-seeking behavior. They also
+motivate the evaluation protocol: a dialogue may reach an acceptable final
+outcome while still violating a budget constraint, taking too many turns, or
+failing to adapt when the counterparty's intent shifts.
+
+\paragraph{Adaptive dialogue policy learning.}
+A growing line of work separates strategic dialogue planning from surface-form
+generation. PPDPP trains a plug-and-play policy planner with goal-oriented
+feedback \cite{deng2024plug}, and TRIP improves planning in non-collaborative
+dialogue through diversified user simulation \cite{zhang-etal-2024-strength}.
+PADPP is the closest multi-objective predecessor: it learns a planner that can
+adapt to different numeric preference vectors at inference time
+\cite{dao-liao-2025-one}. This makes PADPP a strong foundation for studying
+preference-adaptive dialogue, but it also clarifies the interface that remains
+unmodeled. In ALMOND, the control signal is not an observed vector; it is a
+short-term skill selected under a natural-language macro-goal and revised as
+the conversation changes. This shift is motivated by fine-grained intention
+understanding and intent-drift detection
+\cite{liang-etal-2025-intentionframe,wang2025detecting}, which emphasize that
+dialogue state is not only informational but also strategic and affective.
+
+\paragraph{Dynamic preferences and constrained skill learning.}
+Outside dialogue, dynamic-weight MORL studies policies whose objective weights
+change over time \cite{abels2019dynamic}, while generalized MORL learns
+policies over a preference space \cite{yang2019generalized}. Surveys of MORL
+clarify the trade-offs among utility functions, Pareto coverage, and planning
+assumptions \cite{hayes2022practical}. Successor features and GPI provide a
+mechanism for reusing value knowledge across reward functions
+\cite{barreto2017successor,barreto2018transfer}, and constrained policy
+optimization motivates treating safety requirements as constraints rather than
+only as shaped rewards \cite{achiam2017constrained}. ALMOND draws on this view
+of reusable behavior under changing objectives, but moves the adaptation signal
+closer to dialogue practice: short-term skills are inferred from a linguistic
+macro-goal, recent interaction history, and drift evidence. The regret-based
+low-level mechanism further biases training toward skills that remain
+under-mastered, allowing more complex communicative behavior to be bootstrapped
+without retraining a new policy for every objective.
