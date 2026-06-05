@@ -125,9 +125,17 @@ def aggregate_dialogue_metrics(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         for rec in records
         if rec.get("t2da", {}).get("t2da") is not None
     ]
+    # Deal-reached rate. Use the judge's `deal` verdict, not `success`: the LLM
+    # judge tends to set `success=True` (it reads it as "buyer negotiated well")
+    # even when no deal closed, which inflates the metric. `deal` is the actual
+    # agreement signal and matches GSR's deal component.
+    def _deal(rec):
+        jr = rec["judge_result"]
+        return bool(jr.get("deal", jr.get("success", False)))
+
     return {
         "num_dialogues": len(records),
-        "llm_sr": sum(float(rec["judge_result"].get("success", False)) for rec in records) / len(records),
+        "llm_sr": sum(float(_deal(rec)) for rec in records) / len(records),
         "gsr": sum(float(rec.get("gsr", 0)) for rec in records) / len(records),
         "t2da": (sum(t2da_values) / len(t2da_values)) if t2da_values else None,
         "t2da_count": len(t2da_values),
