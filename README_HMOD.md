@@ -734,6 +734,7 @@ Definitions:
 ```text
 t_drift = first turn where simulator drift is triggered
 t_adapt = first turn >= t_drift where ||w_t - w_pre_drift||_1 >= 0.25
+          AND the shift is in the expected direction (relaxed _direction_ok)
 T2DA = t_adapt - t_drift
 ```
 
@@ -746,10 +747,13 @@ Additional checks:
 turn_limit - t_drift + 1
 ```
 
-- Adaptation is measured by **magnitude only** (`||w_t - w_pre_drift||_1 >= 0.25`).
-  The per-mode `expected_weight_shift` gold label is a hand-designed prior, so the
-  metric is not conditioned on direction; `compute_t2da` still accepts the argument
-  for backward compatibility but ignores it.
+- Adaptation requires both **magnitude** (`||w_t - w_pre_drift||_1 >= 0.25`) and the
+  right **direction** (`_direction_ok`, relaxed): no expected objective moves the
+  opposite way and at least one moves the correct way (a flat objective is allowed).
+  The high policy is given a per-intent `weight_adaptation_guideline` (see
+  `hmod/high_policy.py:INTENT_ADAPTATION_GUIDE`) so it knows which way to shift
+  w_local; T2DA then checks that it did. The direction prior comes from the
+  scenario's `expected_weight_shift`.
 
 Relevant logs:
 

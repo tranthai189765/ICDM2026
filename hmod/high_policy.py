@@ -25,6 +25,24 @@ OBJECTIVE_MEANING = {
     "deal_rate": "closing — prioritise sealing the deal when the price is acceptable",
 }
 
+# Recommended direction to move w_local for each seller intent. This is general
+# domain knowledge (intent semantics), NOT the per-scenario gold label, so it can
+# legitimately ground the LLM at inference. It tells the high policy HOW w_local
+# should shift when the seller's intent changes; T2DA then checks it actually did.
+INTENT_ADAPTATION_GUIDE = {
+    "unknown": "No seller signal yet (turn 0). Start balanced, leaning on sl_ratio "
+               "for price saving while there is room to bargain.",
+    "neutral": "Seller is flexible. Emphasise sl_ratio (price saving) to push the "
+               "price down; keep deal_rate modest.",
+    "firm": "Seller has hardened. LOWER sl_ratio and RAISE deal_rate; keep fairness "
+            "moderate to de-escalate. Stop aggressive lowballing.",
+    "final_offer": "Take-it-or-leave-it. If the offer is within the ceiling, sharply "
+                   "RAISE deal_rate and LOWER sl_ratio to close now; if above the "
+                   "ceiling, hold deal_rate low and prepare to walk.",
+    "walkaway_risk": "Seller may leave. RAISE deal_rate (and fairness) and LOWER "
+                     "sl_ratio to secure the deal before they walk.",
+}
+
 
 def parse_allocation_to_weight(parsed: Dict[str, Any]) -> List[float]:
     """Extract w_t from the LLM JSON: prefer the explicit w_t dict/list, else
@@ -115,15 +133,19 @@ class LLMHighPolicy:
             "You are the High-Policy weight controller for a BUYER agent. Given the "
             "buyer's macro goal, the visible dialogue and the CURRENT seller intent, set "
             "the short-term weight w_local over three objectives for the low policy. "
-            "FIRST reason in natural language as an explicit percentage allocation, THEN "
-            "give the matching numeric vector. The buyer must never plan to exceed the "
-            "price ceiling."
+            "Follow the weight_adaptation_guideline for the current seller intent to "
+            "decide WHICH WAY to shift w_local (e.g. when the seller becomes firm or "
+            "issues a final offer, lower sl_ratio and raise deal_rate). FIRST reason in "
+            "natural language as an explicit percentage allocation, THEN give the matching "
+            "numeric vector. The buyer must never plan to exceed the price ceiling."
         )
         user = {
             "macro_goal": macro_goal,
             "objectives_in_order": OBJECTIVE_ORDER,
             "objective_meaning": OBJECTIVE_MEANING,
-            "current_seller_intent": current_intent or "unknown (turn 0)",
+            "current_seller_intent": current_intent or "unknown",
+            "weight_adaptation_guideline": INTENT_ADAPTATION_GUIDE.get(
+                current_intent or "unknown", INTENT_ADAPTATION_GUIDE["neutral"]),
             "previous_w_local": previous,
             "learned_weight_hints": hints or "none yet",
             "buyer_constraints": buyer_constraints,

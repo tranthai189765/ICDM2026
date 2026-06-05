@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from hmod.scenario import HMODScenario
+from hmod.scenario import HMODScenario, OBJECTIVE_ORDER
 
 
 def compute_gsr(
@@ -32,6 +32,41 @@ def compute_gsr(
     }
 
 
+def _direction_ok(
+    before: List[float],
+    after: List[float],
+    expected_weight_shift: Dict[str, str],
+) -> bool:
+    """Relaxed adaptation-direction check: no-violation + at-least-one-correct.
+
+    Counts as a correct adaptation when NO expected objective moves the OPPOSITE
+    way and AT LEAST ONE moves the correct way. A flat objective (delta == 0) is
+    allowed, so an adaptation that raises deal_rate and lowers sl_ratio but keeps
+    fairness moderate is not penalised when the gold shift also lists fairness up.
+    """
+    if not expected_weight_shift:
+        return True
+    index = {name: i for i, name in enumerate(OBJECTIVE_ORDER)}
+    checked = False
+    satisfied = 0
+    for objective, direction in expected_weight_shift.items():
+        if objective not in index:
+            continue
+        checked = True
+        delta = after[index[objective]] - before[index[objective]]
+        if direction == "up":
+            if delta < 0:          # moved opposite -> violation
+                return False
+            if delta > 0:
+                satisfied += 1
+        elif direction == "down":
+            if delta > 0:          # moved opposite -> violation
+                return False
+            if delta < 0:
+                satisfied += 1
+    return checked and satisfied >= 1
+
+
 def compute_t2da(
     weight_trace: List[Dict[str, Any]],
     t_drift: Optional[int],
@@ -39,13 +74,13 @@ def compute_t2da(
     expected_weight_shift: Optional[Dict[str, str]] = None,
     threshold: float = 0.25,
 ) -> Dict[str, Any]:
-    """Turns-to-drift-adaptation, measured by MAGNITUDE only.
+    """Turns-to-drift-adaptation.
 
     Adaptation = the first turn at/after t_drift where the local weight has moved
-    far enough from its pre-drift value, ||w_t - w_pre||_1 >= threshold. The
-    direction is not checked (the per-mode `expected_weight_shift` gold label is a
-    hand-designed prior, so we don't condition the metric on it). The argument is
-    accepted for backward compatibility but ignored.
+    far enough from its pre-drift value (||w_t - w_pre||_1 >= threshold) AND in
+    the expected direction (relaxed: no opposite move + at least one correct, see
+    _direction_ok). The high policy is told the recommended per-intent direction
+    so it can move w_local the right way; this metric checks that it did.
     """
     if t_drift is None:
         return {"t_drift": None, "t_adapt": None, "t2da": None, "adapted": None}
@@ -61,6 +96,7 @@ def compute_t2da(
         if before_candidates
         else weight_trace[0]["weight_vector"]
     )
+    expected_weight_shift = expected_weight_shift or {}
 
     for row in weight_trace:
         turn = int(row["turn"])
@@ -68,7 +104,7 @@ def compute_t2da(
             continue
         current = row["weight_vector"]
         l1 = sum(abs(float(a) - float(b)) for a, b in zip(current, before))
-        if l1 >= threshold:
+        if l1 >= threshold and _direction_ok(before, current, expected_weight_shift):
             return {
                 "t_drift": int(t_drift),
                 "t_adapt": turn,
