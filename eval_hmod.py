@@ -143,6 +143,13 @@ def parse_args():
         help="Use the two-agent controller: an Intent-Drift Detector predicts the "
         "seller intent and a High-Policy LLM sets w_local on detected drift.",
     )
+    parser.add_argument(
+        "--static_high_policy",
+        action="store_true",
+        help="Baseline: the high-policy LLM sets w_local ONCE at turn 0 (goal + "
+        "loaded --policy_hints_file) and holds it for the whole episode — no intent "
+        "detection, no drift adaptation. Isolates the value of dynamic adaptation.",
+    )
     parser.add_argument("--policy_hints_file", default=None,
                         help="High-policy (w_local) hint playbook from train_hmod_2agent.py.")
     parser.add_argument("--detector_hints_file", default=None,
@@ -219,6 +226,29 @@ def _build_two_agent_controller(args):
     )
 
 
+def _build_static_high_policy_controller(args):
+    """Baseline: high-policy LLM generates w_local once, held all episode."""
+    from hmod.baselines import StaticHighPolicyController
+    from hmod.high_policy import LLMHighPolicy
+    from hmod.hints import HintStore
+    from hmod.llm_reflection import LLMWeightReflector
+    from hmod.policy import RuleMetaController
+
+    reflector = LLMWeightReflector(
+        model=args.llm_model, api_key=args.llm_api_key,
+        api_key_env=args.llm_api_key_env, base_url=args.llm_base_url,
+        temperature=args.llm_temperature, max_tokens=args.llm_max_tokens,
+    )
+    policy_hints = HintStore(path=args.policy_hints_file) if args.policy_hints_file else HintStore()
+    logger.info(f"static-high-policy baseline: {len(policy_hints.hints)} policy hints loaded")
+    high_policy = LLMHighPolicy(reflector=reflector, hint_provider=policy_hints.provider())
+    return StaticHighPolicyController(
+        high_policy=high_policy,
+        fallback_controller=RuleMetaController(),
+        fallback_to_rule=args.llm_fallback_to_rule,
+    )
+
+
 def main():
     args = parse_args()
     buyer_policy = None
@@ -239,8 +269,12 @@ def main():
             hint_provider = hint_store.provider()
 
     meta_controller = None
+    if args.two_agent and args.static_high_policy:
+        raise SystemExit("Use only one of --two_agent or --static_high_policy.")
     if args.two_agent:
         meta_controller = _build_two_agent_controller(args)
+    elif args.static_high_policy:
+        meta_controller = _build_static_high_policy_controller(args)
 
     result = run_and_write(
         scenario_file=args.scenario_file,

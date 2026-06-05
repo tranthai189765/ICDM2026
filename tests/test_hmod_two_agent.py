@@ -3,6 +3,7 @@
 import json
 from unittest.mock import MagicMock
 
+from hmod.baselines import StaticHighPolicyController
 from hmod.high_policy import LLMHighPolicy, parse_allocation_to_weight
 from hmod.hints import HintStore
 from hmod.intent_detector import LLMIntentDetector, build_intent_fewshot
@@ -102,6 +103,25 @@ def test_controller_turn0_then_gold_drift_triggers_regen():
     # detector scored on each non-zero turn
     assert len(ctrl.detector_records) == 2
     assert ctrl.detector_records[-1]["gold_intent"] == "final_offer"
+
+
+def test_static_high_policy_generates_once_and_carries():
+    sc = load_scenarios(SCENARIO_FILE)[0]
+    hp = MagicMock()
+    hp.generate.return_value = {"weight_vector": [0.4, 0.3, 0.3], "allocation_text": "a",
+                                "reason": "r", "current_intent": "x", "raw_response": ""}
+    ctrl = StaticHighPolicyController(hp)
+
+    out0 = ctrl.select_local_weight(sc, {}, None, "hmod_dynamic", turn=0, dialogue_history=[])
+    assert out0["reflection_step"] is True and hp.generate.call_count == 1
+
+    # even when the seller intent drifts, the baseline never re-generates
+    out1 = ctrl.select_local_weight(
+        sc, {"intent_state_by_turn": [{"turn": 0, "intent_state": "final_offer"}]},
+        out0["weight_vector"], "hmod_dynamic", turn=1,
+        dialogue_history=[{"role": "user", "content": "My final price is $100"}])
+    assert out1["reflection_step"] is False and hp.generate.call_count == 1
+    assert out1["weight_vector"] == out0["weight_vector"] and out1["intent_state"] == "static"
 
 
 def test_controller_inference_uses_detector():
