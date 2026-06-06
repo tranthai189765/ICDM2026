@@ -143,6 +143,8 @@ class HMODEvaluator:
             # Pre-built controller injected by a caller (e.g. the two-agent
             # trainer/eval). It manages its own LLM agents and hints.
             self.meta_controller = meta_controller
+            # Report the real controller in metrics (not the default arg).
+            self.controller_mode = getattr(meta_controller, "name", self.controller_mode)
         elif controller_mode == "llm_reflection" and mode != "padpp_static":
             reflector = LLMWeightReflector(
                 model=llm_model,

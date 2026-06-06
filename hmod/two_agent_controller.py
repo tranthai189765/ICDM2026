@@ -26,6 +26,8 @@ from hmod.scenario import HMODScenario
 
 
 class TwoAgentMetaController:
+    name = "two_agent"
+
     def __init__(
         self,
         detector: LLMIntentDetector,

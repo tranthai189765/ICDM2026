@@ -499,6 +499,22 @@ policy `abrupt_final_offer` fires at its configured `turn_id`. Note that
 no-drift control. To run only drifting episodes, filter the scenario file to
 `drift_mode != static_no_drift`.
 
+**Static-w_local baseline (`--static_high_policy`).** Ablation that isolates the
+value of dynamic adaptation: the high-policy LLM (with `--policy_hints_file`)
+generates w_local **once** at turn 0 from the goal alone, then the low policy
+runs under that fixed w_local for the whole episode — no intent detection, no
+re-generation ([`hmod/baselines.py:StaticHighPolicyController`](hmod/baselines.py)).
+Compared with `--two_agent` (same high policy + hints), any GSR/T2DA gap is
+attributable to adapting w_local on drift rather than holding it.
+
+```bash
+python eval_hmod.py --static_high_policy \
+  --scenario_file config/scenario/generated/hmod_bargain_test_scenarios.yaml \
+  --low_policy_checkpoint checkpoints/dmorl_phase2_best.pth \
+  --low_policy_gen_models fpt --low_policy_model_type fpt \
+  --llm_model fpt --policy_hints_file outputs/hmod_policy_hints.json --verbose
+```
+
 #### 4.5.1 Agent 1 — Intent-Drift Detector prompt
 
 System:
