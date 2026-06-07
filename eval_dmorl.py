@@ -92,6 +92,10 @@ def parse_eval_args():
     extra.add_argument('--no_mask_redundant', dest='mask_redundant_actions',
                        action='store_false', default=True,
                        help='Disable masking of bin-redundant duplicate actions (match training)')
+    extra.add_argument('--gsr_close_safe', action='store_true', default=False,
+                       help='Force agree at bin 0 when seller quote within auto-agree band (negotiation only).')
+    extra.add_argument('--gsr_close_target_ratio', type=float, default=0.0,
+                       help='Auto-agree band: 0 = at/below buyer_price, 1 = at/below seller_price. Default 0.')
     extra_args, _ = extra.parse_known_args(sys.argv[1:])
     return base_args, vars(extra_args)
 
@@ -292,6 +296,10 @@ if __name__ == '__main__':
     # Inference-only: never run SFT/RL
     model_config.set_params({'run_sft': False, 'run_rlt': False, 'test_phase': True})
     model_config.set_params({'mask_redundant_actions': eval_overrides.get('mask_redundant_actions', True)})
+    model_config.set_params({
+        'gsr_close_safe': bool(eval_overrides.get('gsr_close_safe', False)),
+        'gsr_close_target_ratio': float(eval_overrides.get('gsr_close_target_ratio', 0.0)),
+    })
 
     game = game_class(game_config=game_config, dataset_config=dataset_config)
 

@@ -222,6 +222,7 @@ class HMODEvaluator:
 
         for turn in range(effective_turn_limit):
             state["turn_id"] = turn
+            state["effective_turn_limit"] = effective_turn_limit
             selected = self.meta_controller.select_local_weight(
                 scenario=scenario,
                 simulator_trace=simulator.get_trace(),

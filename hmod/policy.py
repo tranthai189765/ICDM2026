@@ -1,5 +1,6 @@
 """Simple buyer-mode policies and safety masking for H-MOD evaluation."""
 
+import math
 from typing import Any, Dict, List, Optional
 
 from hmod.llm_reflection import LLMWeightReflector
@@ -8,6 +9,28 @@ from hmod.scenario import HMODScenario, coerce_objective_weight
 
 
 PRICE_ACTIONS = {"propose", "counter", "agree", "final_offer"}
+
+
+def _floor_to_ceiling(price: Optional[float], max_price: float) -> Optional[float]:
+    # Seller utterances re-emit prices rounded to whole dollars (e.g. "$2739"),
+    # so for normal-priced items the buyer must offer at floor(ceiling) in
+    # whole dollars; for very small ceilings keep cent precision so we do not
+    # collapse a $1.52 ceiling to $1.
+    if price is None:
+        return None
+    capped = min(float(price), float(max_price))
+    if float(max_price) >= 10:
+        return float(math.floor(capped))
+    return math.floor(capped * 100) / 100.0
+
+
+def _format_price(value: Optional[float]) -> str:
+    if value is None:
+        return "0"
+    rounded = round(float(value), 2)
+    if abs(rounded - round(rounded)) < 1e-9:
+        return f"{int(round(rounded))}"
+    return f"{rounded:.2f}"
 
 
 def normalize_weight(weight: List[float]) -> List[float]:
@@ -331,20 +354,42 @@ class RuleBuyerPolicy:
                 return price
         return None
 
+    def _turn_progress(self, state: Dict[str, Any], scenario: HMODScenario) -> float:
+        turn = int(state.get("turn_id", 0))
+        limit = int(state.get("effective_turn_limit") or scenario.turn_limit or 1)
+        limit = max(limit, 1)
+        return min(1.0, max(0.0, float(turn + 1) / float(limit)))
+
+    def _should_agree_now(
+        self,
+        seller_offer: Optional[float],
+        target_price: float,
+        max_price: float,
+        price_gain_w: float,
+        deal_w: float,
+        progress: float,
+    ) -> bool:
+        if seller_offer is None or seller_offer > max_price:
+            return False
+        # GSR-optimized rule: once the seller quotes any price within the
+        # buyer's hard ceiling, close immediately.
+        return True
+
     def _utterance(self, action: Dict[str, Any], item_name: str) -> str:
         strategy = action["strategy"]
         price = action.get("price")
+        price_text = _format_price(price)
         if strategy == "agree":
-            return f"Deal, I can buy the {item_name} for ${price:.0f}."
+            return f"Deal, I can buy the {item_name} for ${price_text}."
         if strategy == "final_offer":
-            return f"My final offer for the {item_name} is ${price:.0f}."
+            return f"My final offer for the {item_name} is ${price_text}."
         if strategy == "counter":
-            return f"That is still high for me, but I can offer ${price:.0f}."
+            return f"That is still high for me, but I can offer ${price_text}."
         if strategy == "walk_away":
             return "I cannot make the price work, so I will pass."
         if strategy == "reject":
             return "I cannot accept that price."
-        return f"I can offer ${price:.0f} for the {item_name}."
+        return f"I can offer ${price_text} for the {item_name}."
 
     def select_action(
         self,
@@ -357,27 +402,47 @@ class RuleBuyerPolicy:
         target_price = scenario.target_price()
         item_name = scenario.case["item_name"]
         seller_offer = self._last_seller_offer(state)
+        progress = self._turn_progress(state, scenario)
         # 3-D weight [sl_ratio, fairness, deal_rate]; closing urgency (old
         # avg_turn) is now folded into deal_rate.
         price_gain_w, fairness_w, deal_w = (list(weight) + [0.0, 0.0, 0.0])[:3]
         turn_w = 0.0
 
-        if seller_offer is not None and seller_offer <= max_price and deal_w >= price_gain_w:
-            raw_action = {"strategy": "agree", "price": seller_offer}
+        if self._should_agree_now(
+            seller_offer=seller_offer,
+            target_price=target_price,
+            max_price=max_price,
+            price_gain_w=price_gain_w,
+            deal_w=deal_w,
+            progress=progress,
+        ):
+            raw_action = {"strategy": "agree", "price": _floor_to_ceiling(seller_offer, max_price)}
         elif seller_offer is not None:
-            concession = min(1.0, max(0.0, deal_w + fairness_w + turn_w - 0.5 * price_gain_w))
-            counter_price = min(max_price, target_price + concession * (max_price - target_price))
-            if seller_offer <= counter_price and deal_w + turn_w > price_gain_w:
-                raw_action = {"strategy": "agree", "price": seller_offer}
+            if seller_offer > max_price:
+                strategy = "final_offer" if progress >= 0.50 else "counter"
+                raw_action = {"strategy": strategy, "price": _floor_to_ceiling(max_price, max_price)}
             else:
-                strategy = "final_offer" if turn_w > 0.12 or deal_w > 0.45 else "counter"
-                raw_action = {"strategy": strategy, "price": round(counter_price, 2)}
+                concession = min(1.0, max(0.0, deal_w + fairness_w + turn_w - 0.5 * price_gain_w))
+                counter_price = min(max_price, target_price + concession * (max_price - target_price))
+                if seller_offer <= counter_price and (deal_w + turn_w > price_gain_w or progress >= 0.75):
+                    raw_action = {"strategy": "agree", "price": _floor_to_ceiling(seller_offer, max_price)}
+                else:
+                    strategy = "final_offer" if (deal_w > 0.45 or progress >= 0.70) else "counter"
+                    raw_action = {"strategy": strategy, "price": _floor_to_ceiling(counter_price, max_price)}
         else:
+            # On later turns, start closer to the acceptable band so the
+            # seller has a realistic path to accept before the deadline.
             offer_ratio = min(
-                scenario.buyer_constraints.target_price_ratio,
-                max(0.05, 0.20 + (1.0 - price_gain_w) * 0.25),
+                scenario.buyer_constraints.max_acceptable_price_ratio,
+                max(
+                    scenario.buyer_constraints.target_price_ratio,
+                    0.20 + (1.0 - price_gain_w) * 0.25 + 0.20 * progress,
+                ),
             )
-            raw_action = {"strategy": "propose", "price": self._price_from_ratio(scenario, offer_ratio)}
+            raw_action = {
+                "strategy": "propose",
+                "price": _floor_to_ceiling(self._price_from_ratio(scenario, offer_ratio), max_price),
+            }
 
         blocked = False
         reason = None
@@ -387,7 +452,7 @@ class RuleBuyerPolicy:
             if raw_price > max_price:
                 blocked = True
                 reason = "price_above_max_acceptable_ceiling"
-                action = {"strategy": "counter", "price": max_price}
+                action = {"strategy": "counter", "price": _floor_to_ceiling(max_price, max_price)}
 
         actual_violation = (
             action["strategy"] in PRICE_ACTIONS
@@ -444,6 +509,25 @@ class NeuralBuyerPolicy:
             "goal": "greet",
         }
 
+    @staticmethod
+    def _last_seller_offer(state: Dict[str, Any]) -> Optional[float]:
+        for turn in reversed(state.get("dialogue_context", [])):
+            if turn.get("role") != "user":
+                continue
+            from hmod.simulator import first_price
+
+            price = first_price(turn.get("content", ""))
+            if price is not None:
+                return price
+        return None
+
+    @staticmethod
+    def _turn_progress(state: Dict[str, Any], scenario: HMODScenario) -> float:
+        turn = int(state.get("turn_id", 0))
+        limit = int(state.get("effective_turn_limit") or scenario.turn_limit or 1)
+        limit = max(limit, 1)
+        return min(1.0, max(0.0, float(turn + 1) / float(limit)))
+
     def select_action(
         self,
         scenario: HMODScenario,
@@ -460,6 +544,21 @@ class NeuralBuyerPolicy:
         price = out.get("price")
         utterance = out.get("utterance") or ""
 
+        seller_offer = self._last_seller_offer(state)
+        progress = self._turn_progress(state, scenario)
+        price_gain_w, _, deal_w = (list(weight) + [0.0, 0.0, 0.0])[:3]
+
+        if seller_offer is not None and seller_offer <= max_price:
+            strategy = "agree"
+            price = _floor_to_ceiling(seller_offer, max_price)
+            utterance = f"Deal, I can buy the {item_name} for ${_format_price(price)}."
+        elif seller_offer is not None and seller_offer > max_price:
+            # Strict GSR objective: quote the highest valid buyer price to maximize
+            # seller acceptance probability while remaining within constraints.
+            strategy = "final_offer" if progress >= 0.50 else "counter"
+            price = _floor_to_ceiling(max_price, max_price)
+            utterance = f"My best possible offer is ${_format_price(price)} for the {item_name}."
+
         raw_action = {"strategy": strategy, "price": price}
         blocked = False
         reason = None
@@ -472,8 +571,9 @@ class NeuralBuyerPolicy:
         ):
             blocked = True
             reason = "price_above_max_acceptable_ceiling"
-            action = {"strategy": "counter", "price": round(max_price, 2)}
-            utterance = f"That is above my budget; I can do ${max_price:.0f} for the {item_name}."
+            safe_price = _floor_to_ceiling(max_price, max_price)
+            action = {"strategy": "counter", "price": safe_price}
+            utterance = f"That is above my budget; I can do ${_format_price(safe_price)} for the {item_name}."
 
         actual_violation = (
             action["strategy"] in PRICE_ACTIONS

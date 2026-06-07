@@ -93,6 +93,16 @@ class PADPPConfigForNegotiation(PADPPConfig):
         "fairness": [0.0, 1.0, 0.0],
         "deal_rate": [0.0, 0.0, 1.0]
     }
+    # GSR close-safe override (inference only): when the seller's latest quoted
+    # price is at or below the buyer's target, force ('agree', 0) so the
+    # policy stops timing out negotiations it could already close cleanly.
+    # `gsr_close_target_ratio` controls how aggressive the auto-agree is
+    # relative to (buyer_price, seller_price): 0.0 = only agree at or below
+    # buyer_price (the buyer's target), 1.0 = agree at or below seller_price
+    # (close anything). Default 0.0 keeps the original policy behavior unless
+    # the flag is enabled at eval time.
+    gsr_close_safe = False
+    gsr_close_target_ratio = 0.0
     pass
 
 

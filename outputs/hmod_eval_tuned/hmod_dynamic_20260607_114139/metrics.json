@@ -1,0 +1,227 @@
+{
+  "mode": "hmod_dynamic",
+  "controller_mode": "rule_scaffold",
+  "judge_model": "rule",
+  "objective_file": "config/scenario/hmod_buyer_objectives.py",
+  "objective_id": null,
+  "reflection_horizon": 4,
+  "metrics": {
+    "num_dialogues": 40,
+    "llm_sr": 0.85,
+    "gsr": 0.45,
+    "t2da": 12.333333333333334,
+    "t2da_count": 6,
+    "blocked_cvr": 0.0,
+    "actual_cvr": 0.2,
+    "cvr": 0.2
+  },
+  "metrics_by_drift_mode": {
+    "static_no_drift": {
+      "num_dialogues": 10,
+      "llm_sr": 1.0,
+      "gsr": 0.6,
+      "t2da": null,
+      "t2da_count": 0,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.2,
+      "cvr": 0.2
+    },
+    "gradual_firming": {
+      "num_dialogues": 10,
+      "llm_sr": 0.8,
+      "gsr": 0.5,
+      "t2da": 12.0,
+      "t2da_count": 2,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.15,
+      "cvr": 0.15
+    },
+    "abrupt_final_offer": {
+      "num_dialogues": 10,
+      "llm_sr": 0.8,
+      "gsr": 0.3,
+      "t2da": 12.0,
+      "t2da_count": 2,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.25,
+      "cvr": 0.25
+    },
+    "frustrated_walkaway": {
+      "num_dialogues": 10,
+      "llm_sr": 0.8,
+      "gsr": 0.4,
+      "t2da": 13.0,
+      "t2da_count": 2,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.2,
+      "cvr": 0.2
+    }
+  },
+  "metrics_by_persona": {
+    "cooperative_midpoint_seller": {
+      "num_dialogues": 5,
+      "llm_sr": 1.0,
+      "gsr": 0.4,
+      "t2da": null,
+      "t2da_count": 0,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.3,
+      "cvr": 0.3
+    },
+    "firm_after_lowballs_seller": {
+      "num_dialogues": 5,
+      "llm_sr": 0.6,
+      "gsr": 0.2,
+      "t2da": 12.0,
+      "t2da_count": 2,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.2,
+      "cvr": 0.2
+    },
+    "scarcity_pressure_seller": {
+      "num_dialogues": 5,
+      "llm_sr": 0.6,
+      "gsr": 0.0,
+      "t2da": 12.0,
+      "t2da_count": 2,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.3,
+      "cvr": 0.3
+    },
+    "impatient_walkaway_seller": {
+      "num_dialogues": 5,
+      "llm_sr": 0.6,
+      "gsr": 0.0,
+      "t2da": 13.0,
+      "t2da_count": 2,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.3,
+      "cvr": 0.3
+    },
+    "steady_value_seller": {
+      "num_dialogues": 5,
+      "llm_sr": 1.0,
+      "gsr": 0.8,
+      "t2da": null,
+      "t2da_count": 0,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.1,
+      "cvr": 0.1
+    },
+    "guarded_condition_seller": {
+      "num_dialogues": 5,
+      "llm_sr": 1.0,
+      "gsr": 0.8,
+      "t2da": null,
+      "t2da_count": 0,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.1,
+      "cvr": 0.1
+    },
+    "deadline_final_offer_seller": {
+      "num_dialogues": 5,
+      "llm_sr": 1.0,
+      "gsr": 0.6,
+      "t2da": null,
+      "t2da_count": 0,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.2,
+      "cvr": 0.2
+    },
+    "lowball_sensitive_seller": {
+      "num_dialogues": 5,
+      "llm_sr": 1.0,
+      "gsr": 0.8,
+      "t2da": null,
+      "t2da_count": 0,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.1,
+      "cvr": 0.1
+    }
+  },
+  "metrics_by_objective": {
+    "AGGRESSIVE_SAVINGS_THEN_RECOVERY": {
+      "num_dialogues": 8,
+      "llm_sr": 0.875,
+      "gsr": 0.25,
+      "t2da": 13.0,
+      "t2da_count": 1,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.3125,
+      "cvr": 0.3125
+    },
+    "URGENT_GIFT_WITH_HARD_CEILING": {
+      "num_dialogues": 8,
+      "llm_sr": 1.0,
+      "gsr": 0.875,
+      "t2da": null,
+      "t2da_count": 0,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.0625,
+      "cvr": 0.0625
+    },
+    "QUALITY_RISK_THEN_PRICE_PUSH": {
+      "num_dialogues": 4,
+      "llm_sr": 0.5,
+      "gsr": 0.0,
+      "t2da": 12.0,
+      "t2da_count": 2,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.25,
+      "cvr": 0.25
+    },
+    "BACKUP_OPTION_PRESSURE_CONTROL": {
+      "num_dialogues": 4,
+      "llm_sr": 1.0,
+      "gsr": 0.25,
+      "t2da": null,
+      "t2da_count": 0,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.375,
+      "cvr": 0.375
+    },
+    "SCARCITY_ADAPTIVE_BUYER": {
+      "num_dialogues": 4,
+      "llm_sr": 1.0,
+      "gsr": 0.25,
+      "t2da": null,
+      "t2da_count": 0,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.375,
+      "cvr": 0.375
+    },
+    "FAIR_RELATIONSHIP_REPEAT_BUYER": {
+      "num_dialogues": 4,
+      "llm_sr": 1.0,
+      "gsr": 1.0,
+      "t2da": null,
+      "t2da_count": 0,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.0,
+      "cvr": 0.0
+    },
+    "BUDGET_LOCKED_FLEXIBLE_TIMING": {
+      "num_dialogues": 4,
+      "llm_sr": 0.25,
+      "gsr": 0.0,
+      "t2da": 12.333333333333334,
+      "t2da_count": 3,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.125,
+      "cvr": 0.125
+    },
+    "LONG_HAGGLE_FATIGUE_CONTROL": {
+      "num_dialogues": 4,
+      "llm_sr": 1.0,
+      "gsr": 0.75,
+      "t2da": null,
+      "t2da_count": 0,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.125,
+      "cvr": 0.125
+    }
+  },
+  "scenario_file": "config/scenario/generated/hmod_bargain_test_scenarios.yaml",
+  "num_dialogues": 40,
+  "human_audit_samples": 40
+}

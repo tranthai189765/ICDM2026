@@ -171,7 +171,11 @@ class DynamicSellerNegotiationSimulator(Simulator):
         if buyer_offer is not None and buyer_offer >= accept_price:
             self.round_without_deal = 0
             self.trace["seller_offer_by_turn"].append(buyer_offer)
-            return f"Deal, I can sell it for ${buyer_offer:.0f}."
+            # Echo at floor(buyer_offer) so the printed number never exceeds
+            # the buyer's ceiling because of integer rounding.
+            import math as _math
+            quoted = _math.floor(float(buyer_offer))
+            return f"Deal, I can sell it for ${quoted}."
 
         if (
             mode == "frustrated_walkaway"

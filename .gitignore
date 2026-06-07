@@ -33,3 +33,15 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+# Virtual environments
+.venv/
+venv/
+
+# Local scratch dir
+tmp/
+
+# Large local model snapshots
+cache/hf/
+
+# Editor / OS extras
+.vscode/

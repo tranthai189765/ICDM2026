@@ -1,0 +1,6 @@
+scenario_id,source_dataset,recommendation_domain,drift_mode,seller_persona_type,buyer_intent_id,objective,success,gsr,turns,weighted_return,cum_sl_ratio,cum_fairness,cum_deal_rate,static_w_score,deal_price,max_acceptable_price,price_violation,price_attempt_count
+bargain_test_0001,craigslist_bargain,,static_no_drift,cooperative_midpoint_seller,AGGRESSIVE_SAVINGS_THEN_RECOVERY,uniform,True,1,6,0.16666666666666666,0.0,0.0,0.5,0.06842105263157895,2580.0,2738.85,True,6
+bargain_test_0002,craigslist_bargain,,gradual_firming,firm_after_lowballs_seller,AGGRESSIVE_SAVINGS_THEN_RECOVERY,uniform,True,0,3,0.6,1.0,0.0,0.8,0.8673684210526316,1975.0,1968.0,True,3
+bargain_test_0003,craigslist_bargain,,abrupt_final_offer,scarcity_pressure_seller,AGGRESSIVE_SAVINGS_THEN_RECOVERY,uniform,True,0,1,0.3333333333333333,0.0,0.0,1.0,0.1368421052631579,140.0,133.8,True,1
+bargain_test_0004,craigslist_bargain,,frustrated_walkaway,impatient_walkaway_seller,AGGRESSIVE_SAVINGS_THEN_RECOVERY,uniform,True,0,2,0.6333333333333333,0.5555555555555556,0.4444444444444444,0.9,0.5909941520467836,275.0,266.7,True,2
+bargain_test_0005,craigslist_bargain,,static_no_drift,steady_value_seller,URGENT_GIFT_WITH_HARD_CEILING,uniform,True,1,5,0.19999999999999998,0.0,0.0,0.6,0.3272727272727272,420.0,542.4,False,4

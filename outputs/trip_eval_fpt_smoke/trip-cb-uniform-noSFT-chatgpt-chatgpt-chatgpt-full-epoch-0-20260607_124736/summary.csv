@@ -1,0 +1,3 @@
+scenario_id,source_dataset,recommendation_domain,drift_mode,seller_persona_type,buyer_intent_id,objective,success,gsr,turns,weighted_return,cum_sl_ratio,cum_fairness,cum_deal_rate,static_w_score,deal_price,max_acceptable_price,price_violation,price_attempt_count
+bargain_test_0001,craigslist_bargain,,static_no_drift,cooperative_midpoint_seller,AGGRESSIVE_SAVINGS_THEN_RECOVERY,uniform,False,0,9,-0.3,0.0,0.0,-0.8999999999999999,-0.1231578947368421,,2738.85,False,4
+bargain_test_0002,craigslist_bargain,,gradual_firming,firm_after_lowballs_seller,AGGRESSIVE_SAVINGS_THEN_RECOVERY,uniform,True,1,6,0.16666666666666666,0.0,0.0,0.5,0.06842105263157895,1845.0,1968.0,False,1

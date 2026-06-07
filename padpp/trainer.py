@@ -54,6 +54,61 @@ def _build_action_mask(action_mapping, n_actions, device):
     return mask
 
 
+import re as _gsr_re
+
+
+def _gsr_last_seller_price(instance):
+    """Extract the last numeric price (any role 'user') from a PADPP state."""
+    ctx = instance.get('dialogue_context') if isinstance(instance, dict) else None
+    if not ctx:
+        return None
+    for turn in reversed(ctx):
+        if (turn or {}).get('role') != 'user':
+            continue
+        text = (turn.get('content') or '').replace(',', '')
+        nums = _gsr_re.findall(r"[-+]?\d*\.?\d+", text)
+        for tok in nums:
+            try:
+                return float(tok)
+            except ValueError:
+                continue
+    return None
+
+
+def _gsr_close_safe_action(instance, action_mapping, model_config):
+    """Force ('agree', 0) when seller's quote is within the auto-agree band.
+
+    Returns the agree action tuple, or None if no override applies.
+    """
+    if not isinstance(instance, dict):
+        return None
+    tb = instance.get('task_background') or {}
+    buyer_price = tb.get('buyer_price')
+    seller_price = tb.get('seller_price')
+    if buyer_price is None or seller_price is None:
+        return None
+    try:
+        buyer_p = float(buyer_price)
+        seller_p = float(seller_price)
+    except (TypeError, ValueError):
+        return None
+    if seller_p <= buyer_p:
+        return None
+    last_price = _gsr_last_seller_price(instance)
+    if last_price is None:
+        return None
+    ratio = float(getattr(model_config, 'gsr_close_target_ratio', 0.0) or 0.0)
+    ratio = max(0.0, min(1.0, ratio))
+    auto_agree_ceiling = buyer_p + ratio * (seller_p - buyer_p)
+    if last_price > auto_agree_ceiling:
+        return None
+    amap = action_mapping[0] if isinstance(action_mapping, tuple) else action_mapping
+    agree_key = ('agree', 0)
+    if agree_key in amap:
+        return agree_key
+    return None
+
+
 from utils.game import random_weights
 
 from collections import deque
@@ -1082,6 +1137,14 @@ class PADPPTrainer(Trainer):
                     logits, is_test=is_test,
                     agree_action_id=agree_action_id, agree_prob=agree_prob)
                 action = inverse_action_mapping[action]
+                # GSR close-safe override: at inference, if the seller's most
+                # recent quoted price is within the auto-agree band, force
+                # ('agree', 0). Negotiation only, gated by model_config flag so
+                # training behavior is unaffected.
+                if is_test and getattr(self.model_config, 'gsr_close_safe', False):
+                    forced = _gsr_close_safe_action(instance, action_mapping, self.model_config)
+                    if forced is not None:
+                        action = forced
                 loguru_logger.debug(f"action={action} log_prob={log_prob}")
 
         # return action and log prob

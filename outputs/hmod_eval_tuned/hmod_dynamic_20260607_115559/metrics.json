@@ -1,0 +1,227 @@
+{
+  "mode": "hmod_dynamic",
+  "controller_mode": "rule_scaffold",
+  "judge_model": "rule",
+  "objective_file": "config/scenario/hmod_buyer_objectives.py",
+  "objective_id": null,
+  "reflection_horizon": 4,
+  "metrics": {
+    "num_dialogues": 250,
+    "llm_sr": 0.752,
+    "gsr": 0.752,
+    "t2da": 9.491228070175438,
+    "t2da_count": 57,
+    "blocked_cvr": 0.008,
+    "actual_cvr": 0.008,
+    "cvr": 0.008
+  },
+  "metrics_by_drift_mode": {
+    "static_no_drift": {
+      "num_dialogues": 63,
+      "llm_sr": 0.9206349206349206,
+      "gsr": 0.9206349206349206,
+      "t2da": null,
+      "t2da_count": 0,
+      "blocked_cvr": 0.015873015873015872,
+      "actual_cvr": 0.015873015873015872,
+      "cvr": 0.015873015873015872
+    },
+    "gradual_firming": {
+      "num_dialogues": 63,
+      "llm_sr": 0.7142857142857143,
+      "gsr": 0.7142857142857143,
+      "t2da": 9.555555555555555,
+      "t2da_count": 18,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.0,
+      "cvr": 0.0
+    },
+    "abrupt_final_offer": {
+      "num_dialogues": 62,
+      "llm_sr": 0.6774193548387096,
+      "gsr": 0.6774193548387096,
+      "t2da": 8.85,
+      "t2da_count": 20,
+      "blocked_cvr": 0.016129032258064516,
+      "actual_cvr": 0.016129032258064516,
+      "cvr": 0.016129032258064516
+    },
+    "frustrated_walkaway": {
+      "num_dialogues": 62,
+      "llm_sr": 0.6935483870967742,
+      "gsr": 0.6935483870967742,
+      "t2da": 10.105263157894736,
+      "t2da_count": 19,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.0,
+      "cvr": 0.0
+    }
+  },
+  "metrics_by_persona": {
+    "cooperative_midpoint_seller": {
+      "num_dialogues": 32,
+      "llm_sr": 0.9375,
+      "gsr": 0.9375,
+      "t2da": null,
+      "t2da_count": 0,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.0,
+      "cvr": 0.0
+    },
+    "firm_after_lowballs_seller": {
+      "num_dialogues": 32,
+      "llm_sr": 0.53125,
+      "gsr": 0.53125,
+      "t2da": 11.266666666666667,
+      "t2da_count": 15,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.0,
+      "cvr": 0.0
+    },
+    "scarcity_pressure_seller": {
+      "num_dialogues": 31,
+      "llm_sr": 0.5483870967741935,
+      "gsr": 0.5483870967741935,
+      "t2da": 10.071428571428571,
+      "t2da_count": 14,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.0,
+      "cvr": 0.0
+    },
+    "impatient_walkaway_seller": {
+      "num_dialogues": 31,
+      "llm_sr": 0.6129032258064516,
+      "gsr": 0.6129032258064516,
+      "t2da": 13.0,
+      "t2da_count": 12,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.0,
+      "cvr": 0.0
+    },
+    "steady_value_seller": {
+      "num_dialogues": 31,
+      "llm_sr": 0.9032258064516129,
+      "gsr": 0.9032258064516129,
+      "t2da": null,
+      "t2da_count": 0,
+      "blocked_cvr": 0.03225806451612903,
+      "actual_cvr": 0.03225806451612903,
+      "cvr": 0.03225806451612903
+    },
+    "guarded_condition_seller": {
+      "num_dialogues": 31,
+      "llm_sr": 0.9032258064516129,
+      "gsr": 0.9032258064516129,
+      "t2da": 1.0,
+      "t2da_count": 3,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.0,
+      "cvr": 0.0
+    },
+    "deadline_final_offer_seller": {
+      "num_dialogues": 31,
+      "llm_sr": 0.8064516129032258,
+      "gsr": 0.8064516129032258,
+      "t2da": 6.0,
+      "t2da_count": 6,
+      "blocked_cvr": 0.03225806451612903,
+      "actual_cvr": 0.03225806451612903,
+      "cvr": 0.03225806451612903
+    },
+    "lowball_sensitive_seller": {
+      "num_dialogues": 31,
+      "llm_sr": 0.7741935483870968,
+      "gsr": 0.7741935483870968,
+      "t2da": 5.142857142857143,
+      "t2da_count": 7,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.0,
+      "cvr": 0.0
+    }
+  },
+  "metrics_by_objective": {
+    "AGGRESSIVE_SAVINGS_THEN_RECOVERY": {
+      "num_dialogues": 32,
+      "llm_sr": 0.78125,
+      "gsr": 0.78125,
+      "t2da": 9.428571428571429,
+      "t2da_count": 7,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.0,
+      "cvr": 0.0
+    },
+    "URGENT_GIFT_WITH_HARD_CEILING": {
+      "num_dialogues": 32,
+      "llm_sr": 0.78125,
+      "gsr": 0.78125,
+      "t2da": 2.0,
+      "t2da_count": 4,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.0,
+      "cvr": 0.0
+    },
+    "QUALITY_RISK_THEN_PRICE_PUSH": {
+      "num_dialogues": 32,
+      "llm_sr": 0.6875,
+      "gsr": 0.6875,
+      "t2da": 12.3,
+      "t2da_count": 10,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.0,
+      "cvr": 0.0
+    },
+    "BACKUP_OPTION_PRESSURE_CONTROL": {
+      "num_dialogues": 32,
+      "llm_sr": 0.8125,
+      "gsr": 0.8125,
+      "t2da": 5.166666666666667,
+      "t2da_count": 6,
+      "blocked_cvr": 0.03125,
+      "actual_cvr": 0.03125,
+      "cvr": 0.03125
+    },
+    "SCARCITY_ADAPTIVE_BUYER": {
+      "num_dialogues": 32,
+      "llm_sr": 0.9375,
+      "gsr": 0.9375,
+      "t2da": 3.0,
+      "t2da_count": 2,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.0,
+      "cvr": 0.0
+    },
+    "FAIR_RELATIONSHIP_REPEAT_BUYER": {
+      "num_dialogues": 32,
+      "llm_sr": 0.875,
+      "gsr": 0.875,
+      "t2da": 8.0,
+      "t2da_count": 4,
+      "blocked_cvr": 0.03125,
+      "actual_cvr": 0.03125,
+      "cvr": 0.03125
+    },
+    "BUDGET_LOCKED_FLEXIBLE_TIMING": {
+      "num_dialogues": 30,
+      "llm_sr": 0.2,
+      "gsr": 0.2,
+      "t2da": 12.318181818181818,
+      "t2da_count": 22,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.0,
+      "cvr": 0.0
+    },
+    "LONG_HAGGLE_FATIGUE_CONTROL": {
+      "num_dialogues": 28,
+      "llm_sr": 0.9285714285714286,
+      "gsr": 0.9285714285714286,
+      "t2da": 2.0,
+      "t2da_count": 2,
+      "blocked_cvr": 0.0,
+      "actual_cvr": 0.0,
+      "cvr": 0.0
+    }
+  },
+  "scenario_file": "config/scenario/generated/hmod_bargain_test_scenarios.yaml",
+  "num_dialogues": 250,
+  "human_audit_samples": 50
+}
